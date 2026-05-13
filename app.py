@@ -8,7 +8,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v14", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v15", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -49,7 +49,7 @@ def parse_excel_wip(file_obj, filename):
                 pending_days = (today - cr_dt_parsed).days
             except: pass
 
-        record = {
+        data.append({
             "SNO.": "",
             "Pending Days": pending_days,
             "D.Code &JC NO.": f"{str(row.get('Dname', ''))}{str(row.get('Ord.No.', ''))}",
@@ -72,8 +72,7 @@ def parse_excel_wip(file_obj, filename):
             "Invoice no.": "",
             "Date": "",
             "Status": "Open"
-        }
-        data.append(record)
+        })
     return data
 
 def process_paycode_report(file_obj):
@@ -97,12 +96,16 @@ def apply_rich_remarks(text):
     normal = InlineFont()
     rt = CellRichText()
     
-    # Split by hyphen for prefix logic
+    # Logic: Everything before '-' is red/bold, and 'Job completed' is red/bold.
     parts = text.split('-', 1)
+    
+    # Process the part before '-' (Red/Bold)
+    prefix = parts[0]
+    rt.append(TextBlock(red_bold, prefix))
+    
+    # Process the part after '-' (Mixed)
     if len(parts) > 1:
-        rt.append(TextBlock(red_bold, parts[0]))
         suffix = "-" + parts[1]
-        # Check suffix for 'Job completed'
         if "Job completed" in suffix:
             sub_parts = suffix.split("Job completed")
             for i, p in enumerate(sub_parts):
@@ -111,110 +114,96 @@ def apply_rich_remarks(text):
                     rt.append(TextBlock(red_bold, "Job completed"))
         else:
             rt.append(TextBlock(normal, suffix))
-    else:
-        # Check whole text for 'Job completed'
-        if "Job completed" in text:
-            sub_parts = text.split("Job completed")
-            for i, p in enumerate(sub_parts):
-                rt.append(TextBlock(normal, p))
-                if i < len(sub_parts) - 1:
-                    rt.append(TextBlock(red_bold, "Job completed"))
-        else:
-            return text
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v14")
+st.title("📊 WIP Summary Consolidator Pro v15")
 
 with st.sidebar:
-    st.header("Files")
-    summary_file = st.file_uploader("1. Summary File", type=["xlsx"])
-    open_order_files = st.file_uploader("2. New Lists", type=["xlsx"], accept_multiple_files=True)
-    paycode_file = st.file_uploader("3. Paycode Report", type=["xlsx"])
+    st.header("Upload Center")
+    summary_file = st.file_uploader("1. Existing Summary File", type=["xlsx"])
+    open_order_files = st.file_uploader("2. New Open Order Lists", type=["xlsx"], accept_multiple_files=True)
+    paycode_file = st.file_uploader("3. Paycodewise Report", type=["xlsx"])
 
-if st.button("Update & Format Summary"):
+if st.button("Update Summary"):
     if not summary_file:
-        st.warning("Upload Summary file first.")
+        st.warning("Please upload the Summary file.")
     else:
-        # Load with formatting preservation
-        wb = openpyxl.load_workbook(summary_file, data_only=False)
+        # keep_links=True solves the externalLink1.xml repair error
+        wb = openpyxl.load_workbook(summary_file, keep_links=True)
         target_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
         ws = wb[target_name]
 
-        # Read existing
-        data_rows = list(ws.iter_rows(values_only=True))
-        header = data_rows[0]
+        # Extract existing data
+        rows = list(ws.iter_rows(values_only=True))
+        header = rows[0]
         col_map = {name: i for i, name in enumerate(header)}
-        
-        existing_data = []
-        for row in data_rows[1:]:
-            existing_data.append({header[i]: val for i, val in enumerate(row)})
+        existing_data = [{header[i]: val for i, val in enumerate(row)} for row in rows[1:]]
 
-        # New data
+        # Process new files
         new_data = []
         for f in open_order_files:
             new_data.extend(parse_excel_wip(f, f.name))
         
-        # Deduplicate & Filter
+        # Merge and Filter
         existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data}
         unique_new = [n for n in new_data if str(n['Ord.No.']) not in existing_ids]
         full_data = existing_data + unique_new
         full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
-
+        
         paycode_ids = process_paycode_report(paycode_file)
 
-        # Clear and write
+        # Surgical update to sheet
         ws.delete_rows(2, ws.max_row)
 
-        # Styles
+        # Formatting Styles
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
         red_text = Font(color="9C0006", bold=True)
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         green_text = Font(color="006100", bold=True)
+        none_fill = PatternFill(fill_type=None)
 
         for r_idx, row_data in enumerate(full_data, start=2):
             ord_no = str(row_data.get('Ord.No.', ''))
-            inv_no = row_data.get('Invoice no.', '')
+            inv_no = str(row_data.get('Invoice no.', '') or '').strip()
             
-            # 1. Category & Status Logic
-            category = str(row_data.get('Category', '') or '')
+            # Logic for Category and Status
+            cat_val = str(row_data.get('Category', '') or '')
             status = "Open"
-            
+
             if ord_no in paycode_ids:
-                category = "Cancelled"
+                cat_val = "Cancelled"
                 status = "Closed"
-            elif inv_no and str(inv_no).strip() != "":
-                category = "JOB CARD CLOSED"
+            elif inv_no != "":
+                cat_val = "JOB CARD CLOSED"
                 status = "Closed"
-            elif "CANCEL" in category.upper() or "CLOSED" in category.upper():
+            elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                 status = "Closed"
 
-            # 2. Write and Format
             for name, c_idx in col_map.items():
                 cell = ws.cell(row=r_idx, column=c_idx+1)
                 
                 if name == "SNO.": cell.value = r_idx - 1
                 elif name == "Category":
-                    cell.value = category
-                    # Formatting only for specific values
-                    if category == "JOB CARD CLOSED":
+                    cell.value = cat_val
+                    # Clear formatting first
+                    cell.fill = none_fill
+                    cell.font = Font()
+                    if cat_val == "JOB CARD CLOSED":
                         cell.fill = green_fill
                         cell.font = green_text
-                    elif category == "Cancelled":
+                    elif cat_val == "Cancelled":
                         cell.fill = red_fill
                         cell.font = red_text
-                    else:
-                        cell.fill = PatternFill(fill_type=None)
-                        cell.font = Font()
                 elif name == "Status":
                     cell.value = status
                     cell.fill = red_fill if status == "Closed" else green_fill
                     cell.font = red_text if status == "Closed" else green_text
                 elif name == "Remarks":
-                    cell.value = apply_rich_remarks(str(row_data.get('Remarks', '')))
+                    cell.value = apply_rich_remarks(str(row_data.get('Remarks', '') or ''))
                 else:
                     cell.value = row_data.get(name, "")
 
         output = io.BytesIO()
         wb.save(output)
-        st.success("Summary Updated and Formatted!")
-        st.download_button("📥 Download Final Summary", output.getvalue(), file_name=summary_file.name)
+        st.success("Summary Updated Successfully!")
+        st.download_button("📥 Download Repaired Summary", output.getvalue(), file_name=summary_file.name)
