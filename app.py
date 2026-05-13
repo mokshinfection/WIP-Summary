@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v25", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v26", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -61,7 +61,6 @@ def parse_excel_wip(file_obj, filename):
                 ord_no = str(get_v('Ord.No.')).split('.')[0]
                 cr_dt_raw = get_v('Cr.Dt')
                 
-                # Calculation forced to Whole Number
                 calc_pending = ""
                 if cr_dt_raw:
                     try:
@@ -73,7 +72,7 @@ def parse_excel_wip(file_obj, filename):
                         except:
                             calc_pending = val_0
 
-                record = {
+                data.append({
                     "SNO.": "",
                     "Pending Days": calc_pending,
                     "D.Code &JC NO.": f"{curr_dname}{ord_no}",
@@ -96,16 +95,16 @@ def parse_excel_wip(file_obj, filename):
                     "Invoice no.": "",
                     "Date": "",
                     "Status": "Open"
-                }
+                })
                 
                 if i + 1 < len(df_raw) and 'Notes' in [str(x).strip() for x in df_raw.iloc[i+1]]:
                     row_notes = df_raw.iloc[i+1]
                     for k in range(min(21, len(df_raw.columns)), len(df_raw.columns)):
                         if not pd.isna(row_notes[k]) and str(row_notes[k]).strip() not in ["", "Notes"]:
-                            record['Notes'] = row_notes[k]
+                            record_to_update = data[-1]
+                            record_to_update['Notes'] = row_notes[k]
                             break
                     i += 1
-                data.append(record)
         except: pass
         i += 1
     return data
@@ -142,7 +141,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v25")
+st.title("📊 WIP Summary Consolidator Pro v26")
 
 with st.sidebar:
     st.header("Files")
@@ -150,7 +149,7 @@ with st.sidebar:
     open_order_files = st.file_uploader("2. New Open Order Lists", type=["xlsx"], accept_multiple_files=True)
     paycode_file = st.file_uploader("3. Paycodewise Report", type=["xlsx"])
 
-if st.button("Generate & Format Report"):
+if st.button("Generate Final Report"):
     if not summary_file:
         st.warning("Please upload the Summary file.")
     else:
@@ -162,10 +161,49 @@ if st.button("Generate & Format Report"):
         header = data_rows[0]
         col_map_ws = {name: i for i, name in enumerate(header)}
         
-        # Capture existing data and convert Pending Days to Int
         existing_data = []
         for row in data_rows[1:]:
             d = {header[i]: val for i, val in enumerate(row)}
             if 'Pending Days' in d and d['Pending Days'] is not None:
                 try:
-                    d['Pending Days'] = int(float(d
+                    d['Pending Days'] = int(float(str(d['Pending Days'])))
+                except: pass
+            existing_data.append(d)
+
+        new_data_raw = []
+        for f in open_order_files:
+            new_data_raw.extend(parse_excel_wip(f, f.name))
+        
+        existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
+        unique_new = [n for n in new_data_raw if str(n['Ord.No.']) not in existing_ids]
+        full_data = existing_data + unique_new
+        full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
+        
+        paycode_ids = process_paycode_report(paycode_file)
+
+        if ws.max_row > 1:
+            ws.delete_rows(2, ws.max_row - 1)
+
+        green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+        red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
+
+        for r_idx, row_data in enumerate(full_data, start=2):
+            ord_no = str(row_data.get('Ord.No.', ''))
+            inv_no = row_data.get('Invoice no.', '')
+            has_inv = inv_no is not None and str(inv_no).strip() != "" and str(inv_no).strip().lower() != 'nan'
+            cat_val = str(row_data.get('Category', '') or '').strip()
+            status = "Open"
+
+            if has_inv:
+                cat_val = "JOB CARD CLOSED"
+                status = "Closed"
+            elif ord_no in paycode_ids and "JOB CARD CLOSED" not in cat_val.upper():
+                cat_val = "Cancelled"
+                status = "Closed"
+            elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
+                status = "Closed"
+
+            for name, c_idx in col_map_ws.items():
+                cell = ws.cell(row
