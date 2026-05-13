@@ -4,10 +4,12 @@ import io
 import openpyxl
 import re
 from openpyxl.styles import Font, PatternFill
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v12", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v13", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -94,8 +96,53 @@ def process_paycode_report(file_obj):
     except: pass
     return set()
 
-st.title("📊 WIP Summary Consolidator Pro v12")
-st.info("Directly updates 'Master Data' while preserving all other sheets (Pivots, Formulas, Charts) and their formatting.")
+def apply_remarks_formatting(text):
+    """Applies rich text formatting based on user requirements."""
+    if not text or not isinstance(text, str):
+        return text
+    
+    red_bold = InlineFont(color="FFFF0000", b=True)
+    normal = InlineFont()
+    
+    # Logic: 
+    # 1. Everything before '-' is red/bold.
+    # 2. 'Job completed' is red/bold.
+    
+    # Split by hyphen
+    parts = text.split('-', 1)
+    rt = CellRichText()
+    
+    if len(parts) > 1:
+        prefix = parts[0]
+        suffix = "-" + parts[1]
+        
+        # Check if 'Job completed' is in prefix (it already gets red/bold)
+        rt.append(TextBlock(red_bold, prefix))
+        
+        # Check suffix for 'Job completed'
+        if "Job completed" in suffix:
+            sub_parts = suffix.split("Job completed")
+            for i, part in enumerate(sub_parts):
+                rt.append(TextBlock(normal, part))
+                if i < len(sub_parts) - 1:
+                    rt.append(TextBlock(red_bold, "Job completed"))
+        else:
+            rt.append(TextBlock(normal, suffix))
+    else:
+        # No hyphen - check for 'Job completed' only
+        if "Job completed" in text:
+            sub_parts = text.split("Job completed")
+            for i, part in enumerate(sub_parts):
+                rt.append(TextBlock(normal, part))
+                if i < len(sub_parts) - 1:
+                    rt.append(TextBlock(red_bold, "Job completed"))
+        else:
+            # Just plain text
+            return text
+            
+    return rt
+
+st.title("📊 WIP Summary Consolidator Pro v13")
 
 with st.sidebar:
     st.header("Files")
@@ -107,105 +154,103 @@ if st.button("Edit & Update Summary"):
     if not summary_file:
         st.warning("Please upload the Summary file.")
     else:
-        # Load workbook with openpyxl (this keeps all sheets, charts, and formulas intact)
         wb = openpyxl.load_workbook(summary_file)
         target_sheet_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
         ws = wb[target_sheet_name]
 
-        # 1. Read current Master Data for deduplication
+        # Read current Data
         data_gen = ws.values
         header = next(data_gen)
         col_map = {name: i for i, name in enumerate(header)}
         
         existing_data = []
-        # Re-read with cell objects to capture formatting for Remarks
         for row in ws.iter_rows(min_row=2):
             row_dict = {}
             for name, idx in col_map.items():
                 cell = row[idx]
                 row_dict[name] = cell.value
-                if name == "Remarks":
-                    row_dict["_remarks_color"] = cell.font.color.rgb if cell.font and cell.font.color else None
             existing_data.append(row_dict)
 
-        # 2. Parse new data
+        # Parse new data
         new_data_raw = []
         for f in open_order_files:
             new_data_raw.extend(parse_excel_wip(f, f.name))
         
-        # 3. Deduplicate (only add what isn't there)
         existing_ord_nos = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
         unique_new = [n for n in new_data_raw if str(n['Ord.No.']) not in existing_ord_nos]
-        
-        # Combine existing and new
         full_data = existing_data + unique_new
-        
-        # Filter Chassis 'B'
         full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
 
-        # 4. Paycode Cross-ref
         paycode_ids = process_paycode_report(paycode_file) if paycode_file else set()
 
-        # 5. SURGICAL EDIT: Clear data rows only, then repopulate
-        # This keeps the header and all other sheets exactly as they are.
+        # Surgical Edit
         ws.delete_rows(2, ws.max_row)
 
         # Styles
-        red_font = Font(color="FFFF0000", bold=True)
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-        green_font = Font(color="006100", bold=True)
+        green_font_style = Font(color="006100", bold=True)
+        red_font_style = Font(color="9C0006", bold=True)
 
-        inv_col_idx = col_map.get('Invoice no.', 20) + 1
-        cat_col_idx = col_map.get('Category', 19) + 1
-        stat_col_idx = col_map.get('Status', 22) + 1
-        rem_col_idx = col_map.get('Remarks', 18) + 1
-        ord_col_idx = col_map.get('Ord.No.', 10) + 1
+        idx_inv = col_map.get('Invoice no.', 20)
+        idx_cat = col_map.get('Category', 19)
+        idx_stat = col_map.get('Status', 22)
+        idx_rem = col_map.get('Remarks', 18)
+        idx_ord = col_map.get('Ord.No.', 10)
         
-        inv_letter = openpyxl.utils.get_column_letter(inv_col_idx)
-        cat_letter = openpyxl.utils.get_column_letter(cat_col_idx)
+        inv_letter = openpyxl.utils.get_column_letter(idx_inv + 1)
+        cat_letter = openpyxl.utils.get_column_letter(idx_cat + 1)
 
         for r_idx, row_data in enumerate(full_data, start=2):
+            ord_val = str(row_data.get('Ord.No.', ''))
+            inv_val = row_data.get('Invoice no.', '')
+            has_inv = inv_val is not None and str(inv_val).strip() != ""
+            in_paycode = ord_val in paycode_ids
+
+            # Status and Category Logic
+            category = row_data.get('Category', '')
+            status = "Open"
+
+            if in_paycode:
+                category = "Cancelled"
+                status = "Closed"
+            elif has_inv:
+                category = "JOB CARD CLOSED"
+                status = "Closed"
+            elif "CANCEL" in str(category).upper() or "CLOSED" in str(category).upper():
+                status = "Closed"
+
+            # Write values
             for name, idx in col_map.items():
                 cell = ws.cell(row=r_idx, column=idx + 1)
                 
                 if name == "SNO.":
                     cell.value = r_idx - 1
                 elif name == "Category":
-                    cell.value = f'=IF(ISBLANK({inv_letter}{r_idx}), "", "JOB CARD CLOSED")'
+                    cell.value = category
                 elif name == "Status":
-                    pass # logic below
+                    cell.value = status
+                    if status == "Closed":
+                        cell.fill = red_fill
+                        cell.font = red_font_style
+                    else:
+                        cell.fill = green_fill
+                        cell.font = green_font_style
+                elif name == "Remarks":
+                    raw_rem = row_data.get("Remarks", "")
+                    cell.value = apply_remarks_formatting(raw_rem)
                 else:
                     cell.value = row_data.get(name, "")
 
-                # Keep the red color for remarks if it was originally red
-                if name == "Remarks" and row_data.get("_remarks_color") == "FFFF0000":
-                    cell.font = red_font
+            # Apply Green Formatting for Category if it has value (simulating formula check)
+            if str(ws.cell(row=r_idx, column=idx_cat+1).value).strip() != "":
+                ws.cell(row=r_idx, column=idx_cat+1).fill = green_fill
+                ws.cell(row=r_idx, column=idx_cat+1).font = green_font_style
 
-            # Live Status Calculation
-            ord_val = str(ws.cell(row=r_idx, column=ord_col_idx).value)
-            inv_val = ws.cell(row=r_idx, column=inv_col_idx).value
-            
-            is_closed = (ord_val in paycode_ids) or (inv_val is not None and str(inv_val).strip() != "")
-            
-            status_cell = ws.cell(row=r_idx, column=stat_col_idx)
-            if is_closed:
-                status_cell.value = "Closed"
-                status_cell.fill = red_fill
-                status_cell.font = Font(color="9C0006", bold=True)
-            else:
-                status_cell.value = "Open"
-                status_cell.fill = green_fill
-                status_cell.font = green_font
-        
-        # Apply conditional formatting to Category column
-        ws.conditional_formatting.add(f'{cat_letter}2:{cat_letter}{len(full_data)+1}',
-            FormulaRule(formula=[f'NOT(ISBLANK({inv_letter}2))'], fill=green_fill, font=green_font))
-
-        # Save to buffer
+        # Save
         output = io.BytesIO()
         wb.save(output)
         
-        st.success("Master Data updated. All other sheets (Pivots, Charts, etc.) remain untouched.")
+        st.success("Update Complete! All requirements applied.")
         st.download_button(label="📥 Download Updated Summary", data=output.getvalue(), 
                            file_name=summary_file.name)
