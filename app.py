@@ -3,12 +3,11 @@ import pandas as pd
 import io
 import openpyxl
 import re
-import copy
 from openpyxl.styles import Font, PatternFill
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v10", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v9", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -95,8 +94,8 @@ def process_paycode_report(file_obj):
     except: pass
     return set()
 
-st.title("📊 WIP Summary Consolidator Pro v10")
-st.info("Updates only the Master Data sheet while leaving all other sheets (Pivots, Formulas, Charts) untouched.")
+st.title("📊 WIP Summary Consolidator Pro v9")
+st.info("Upload your existing Summary file to update it with new data while preserving all formatting and sheets.")
 
 with st.sidebar:
     st.header("Files")
@@ -106,23 +105,20 @@ with st.sidebar:
 
 if st.button("Update Summary Data"):
     if not summary_file:
-        st.warning("Please upload the Summary file.")
+        st.warning("Please upload the Summary file you want to edit.")
     else:
-        # Load workbook with openpyxl directly to keep EVERYTHING
-        wb = openpyxl.load_workbook(summary_file)
-        target_sheet_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
-        ws = wb[target_sheet_name]
-
-        # Extract current data from Master sheet for deduplication
-        data = ws.values
-        cols = next(data)
-        master_df = pd.DataFrame(data, columns=cols)
+        # Load Existing Summary exactly as it is
+        wb_orig = openpyxl.load_workbook(summary_file)
+        xls = pd.ExcelFile(summary_file)
+        existing_sheets = {sheet: xls.parse(sheet) for sheet in xls.sheet_names}
+        target_sheet_name = "Master Data" if "Master Data" in existing_sheets else xls.sheet_names[0]
+        master_df = existing_sheets[target_sheet_name]
 
         # Parse new data
-        new_data_list = []
+        new_data = []
         for f in open_order_files:
-            new_data_list.extend(parse_excel_wip(f, f.name))
-        new_df = pd.DataFrame(new_data_list)
+            new_data.extend(parse_excel_wip(f, f.name))
+        new_df = pd.DataFrame(new_data)
 
         # Deduplicate
         if not master_df.empty and not new_df.empty:
@@ -139,58 +135,63 @@ if st.button("Update Summary Data"):
 
             paycode_ids = process_paycode_report(paycode_file) if paycode_file else set()
             
-            # Instead of overwriting the whole file, we overwrite ONLY the cells in the Master sheet
-            # Clear current Master sheet (except header)
-            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-                for cell in row:
-                    cell.value = None
-
-            # Styles
-            red_font = Font(color="FF0000", bold=True)
-            red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-            green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-            green_font = Font(color="006100", bold=True)
-
-            col_map = {val: i+1 for i, val in enumerate(combined_df.columns)}
-            
-            # Re-write the combined data back to the sheet
-            for r_idx, row_data in enumerate(combined_df.to_dict('records'), start=2):
-                for col_name, value in row_data.items():
-                    c_idx = col_map[col_name]
-                    cell = ws.cell(row=r_idx, column=c_idx)
-                    
-                    # 1. Formatting for Remarks (Red check)
-                    if col_name == "Remarks" and str(value).lower() == "checked": # or other logic
-                         pass # existing logic per cell would need to be re-applied or held
-
-                    # 2. Re-apply Category Formula
-                    if col_name == "Category":
-                        inv_letter = openpyxl.utils.get_column_letter(col_map["Invoice no."])
-                        cell.value = f'=IF(ISBLANK({inv_letter}{r_idx}), "", "JOB CARD CLOSED")'
-                    else:
-                        cell.value = value
-
-                    # 3. Status logic
-                    if col_name == "Status":
-                        ord_val = str(row_data.get("Ord.No.", ""))
-                        inv_val = row_data.get("Invoice no.", "")
-                        cat_val = str(row_data.get("Category", "")).upper()
-                        
-                        is_closed = (ord_val in paycode_ids) or (inv_val and str(inv_val).strip() != "") or ("CLOSED" in cat_val)
-                        
-                        if is_closed:
-                            cell.value = "Closed"
-                            cell.fill = red_fill
-                            cell.font = Font(color="9C0006", bold=True)
-                        else:
-                            cell.value = "Open"
-                            cell.fill = green_fill
-                            cell.font = green_font
-
-            # Finalize
             output = io.BytesIO()
-            wb.save(output)
-            
-            st.success("Successfully updated the Master Data while preserving all other sheets and formulas!")
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                # Write updated data to the target sheet
+                combined_df.to_excel(writer, index=False, sheet_name=target_sheet_name)
+                
+                # Copy all other sheets over exactly
+                for sheet_name in wb_orig.sheet_names:
+                    if sheet_name != target_sheet_name:
+                        existing_sheets[sheet_name].to_excel(writer, index=False, sheet_name=sheet_name)
+
+                ws = writer.book[target_sheet_name]
+                ws_orig = wb_orig[target_sheet_name]
+
+                # Formatting and Logic
+                red_font = Font(color="FF0000", bold=True)
+                red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                green_font = Font(color="006100", bold=True)
+
+                cols = {val: i+1 for i, val in enumerate(combined_df.columns)}
+                cat_col = cols.get('Category')
+                inv_col = cols.get('Invoice no.')
+                stat_col = cols.get('Status')
+                rem_col = cols.get('Remarks')
+                ord_col = cols.get('Ord.No.')
+
+                inv_letter = openpyxl.utils.get_column_letter(inv_col)
+                cat_letter = openpyxl.utils.get_column_letter(cat_col)
+
+                for r in range(2, len(combined_df) + 2):
+                    # Keep Red Remarks
+                    if r <= ws_orig.max_row:
+                        orig_cell = ws_orig.cell(row=r, column=rem_col)
+                        if orig_cell.font and orig_cell.font.color and orig_cell.font.color.rgb == "FFFF0000":
+                            ws.cell(row=r, column=rem_col).font = red_font
+
+                    # Fix Category
+                    ws.cell(row=r, column=cat_col).value = f'=IF(ISBLANK({inv_letter}{r}), \"\", \"JOB CARD CLOSED\")'
+                    ws.conditional_formatting.add(f'{cat_letter}{r}',
+                        FormulaRule(formula=[f'NOT(ISBLANK({inv_letter}{r}))'], fill=green_fill, font=green_font))
+
+                    # Status Logic
+                    ord_val = str(ws.cell(row=r, column=ord_col).value)
+                    # We evaluate formula-like logic here for the Status value
+                    inv_val = ws.cell(row=r, column=inv_col).value
+                    is_closed = (ord_val in paycode_ids) or (inv_val is not None and str(inv_val).strip() != "")
+                    
+                    status_cell = ws.cell(row=r, column=stat_col)
+                    if is_closed:
+                        status_cell.value = "Closed"
+                        status_cell.fill = red_fill
+                        status_cell.font = Font(color="9C0006", bold=True)
+                    else:
+                        status_cell.value = "Open"
+                        status_cell.fill = green_fill
+                        status_cell.font = green_font
+
+            st.success("Update Complete!")
             st.download_button(label="📥 Download Updated Summary", data=output.getvalue(), 
-                               file_name=summary_file.name)
+                               file_name=summary_file.name) # Use the same filename
