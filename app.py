@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v20", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v21", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -50,13 +50,17 @@ def parse_excel_wip(file_obj, filename):
                 pending_days = (today - cr_dt_parsed).days
             except: pass
 
+        d_code = str(row.get('Dname', '')).strip()
+        # New Dealer Name Formatting
+        formatted_dealer_name = f"{d_code} | VE Commercial Vehicles Ltd | {area}"
+
         data.append({
             "SNO.": "",
             "Pending Days": pending_days,
-            "D.Code &JC NO.": f"{str(row.get('Dname', ''))}{str(row.get('Ord.No.', ''))}",
-            "Dname": row.get('Dname', ''),
+            "D.Code &JC NO.": f"{d_code}{str(row.get('Ord.No.', ''))}",
+            "Dname": d_code, # Extracted prefix
             "Area": area,
-            "Dealer Name": row.get('Dealer Name', ''),
+            "Dealer Name": formatted_dealer_name, # Standardized format
             "Req. Delv. Dt": row.get('Req. Delv. Dt', ''),
             "Cr.Dt": cr_dt,
             "Total": row.get('Total', 0),
@@ -113,7 +117,7 @@ def apply_rich_remarks(text):
             rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v20")
+st.title("📊 WIP Summary Consolidator Pro v21")
 
 with st.sidebar:
     st.header("Files")
@@ -121,7 +125,7 @@ with st.sidebar:
     open_order_files = st.file_uploader("2. New Open Order Lists", type=["xlsx"], accept_multiple_files=True)
     paycode_file = st.file_uploader("3. Paycodewise Report", type=["xlsx"])
 
-if st.button("Generate & Embed Rules"):
+if st.button("Generate & Standardize Names"):
     if not summary_file:
         st.warning("Please upload the Summary file.")
     else:
@@ -145,7 +149,7 @@ if st.button("Generate & Embed Rules"):
         
         paycode_ids = process_paycode_report(paycode_file)
 
-        # Clear data
+        # Surgical update to sheet
         ws.delete_rows(2, ws.max_row)
 
         for r_idx, row_data in enumerate(full_data, start=2):
@@ -180,27 +184,25 @@ if st.button("Generate & Embed Rules"):
         cat_col_letter = openpyxl.utils.get_column_letter(col_map.get('Category', 19) + 1)
         stat_col_letter = openpyxl.utils.get_column_letter(col_map.get('Status', 22) + 1)
 
-        # 1. Category Green Rule (Closed/Cancelled)
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-        ws.conditional_formatting.add(f'{cat_col_letter}2:{cat_col_letter}{last_row + 100}', 
-            FormulaRule(formula=[f'OR({cat_col_letter}2="JOB CARD CLOSED", {cat_col_letter}2="Cancelled", {cat_col_letter}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
-
-        # 2. Category Blue Rule (Anything Else)
         blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
-        ws.conditional_formatting.add(f'{cat_col_letter}2:{cat_col_letter}{last_row + 100}', 
+        red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        
+        # 1. Category Rules
+        ws.conditional_formatting.add(f'{cat_col_letter}2:{cat_col_letter}{last_row + 500}', 
+            FormulaRule(formula=[f'OR({cat_col_letter}2="JOB CARD CLOSED", {cat_col_letter}2="Cancelled", {cat_col_letter}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
+        ws.conditional_formatting.add(f'{cat_col_letter}2:{cat_col_letter}{last_row + 500}', 
             FormulaRule(formula=[f'AND({cat_col_letter}2<>"", {cat_col_letter}2<>"JOB CARD CLOSED", {cat_col_letter}2<>"Cancelled", {cat_col_letter}2<>"CANCELLED")'], fill=blue_fill))
 
-        # 3. Status Rules
-        red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        # 2. Status Rules
         red_text = Font(color="9C0006", bold=True)
-        ws.conditional_formatting.add(f'{stat_col_letter}2:{stat_col_letter}{last_row + 100}', 
-            FormulaRule(formula=[f'{stat_col_letter}2="Closed"'], fill=red_fill, font=red_text))
-        
         green_text = Font(color="006100", bold=True)
-        ws.conditional_formatting.add(f'{stat_col_letter}2:{stat_col_letter}{last_row + 100}', 
+        ws.conditional_formatting.add(f'{stat_col_letter}2:{stat_col_letter}{last_row + 500}', 
+            FormulaRule(formula=[f'{stat_col_letter}2="Closed"'], fill=red_fill, font=red_text))
+        ws.conditional_formatting.add(f'{stat_col_letter}2:{stat_col_letter}{last_row + 500}', 
             FormulaRule(formula=[f'{stat_col_letter}2="Open"'], fill=green_fill, font=green_text))
 
         output = io.BytesIO()
         wb.save(output)
-        st.success("Summary generated with Dynamic Conditional Formatting!")
+        st.success("Summary Updated with Standardized Dealer Names!")
         st.download_button("📥 Download Final Summary", output.getvalue(), file_name=summary_file.name)
