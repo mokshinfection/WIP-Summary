@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v27", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename."""
