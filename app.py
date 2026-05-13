@@ -6,9 +6,10 @@ import re
 from openpyxl.styles import Font, PatternFill
 from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
+from openpyxl.formatting.rule import FormulaRule
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v18", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v20", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -112,7 +113,7 @@ def apply_rich_remarks(text):
             rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v18")
+st.title("📊 WIP Summary Consolidator Pro v20")
 
 with st.sidebar:
     st.header("Files")
@@ -120,7 +121,7 @@ with st.sidebar:
     open_order_files = st.file_uploader("2. New Open Order Lists", type=["xlsx"], accept_multiple_files=True)
     paycode_file = st.file_uploader("3. Paycodewise Report", type=["xlsx"])
 
-if st.button("Generate & Format Summary"):
+if st.button("Generate & Embed Rules"):
     if not summary_file:
         st.warning("Please upload the Summary file.")
     else:
@@ -144,15 +145,8 @@ if st.button("Generate & Format Summary"):
         
         paycode_ids = process_paycode_report(paycode_file)
 
+        # Clear data
         ws.delete_rows(2, ws.max_row)
-
-        # Updated Color Palette
-        green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-        blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
-        red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        red_status_text = Font(color="9C0006", bold=True)
-        green_status_text = Font(color="006100", bold=True)
-        none_fill = PatternFill(fill_type=None)
 
         for r_idx, row_data in enumerate(full_data, start=2):
             ord_no = str(row_data.get('Ord.No.', ''))
@@ -174,28 +168,39 @@ if st.button("Generate & Format Summary"):
             for name, c_idx in col_map.items():
                 cell = ws.cell(row=r_idx, column=c_idx+1)
                 if name == "SNO.": cell.value = r_idx - 1
-                elif name == "Category":
-                    cell.value = cat_val
-                    # Formatting: Green for Closed/Cancelled, Blue for the rest
-                    if cat_val in ["JOB CARD CLOSED", "Cancelled"]:
-                        cell.fill = green_fill
-                        cell.font = Font() # Standard font
-                    elif cat_val != "":
-                        cell.fill = blue_fill
-                        cell.font = Font() # Standard font
-                    else:
-                        cell.fill = none_fill
-                        cell.font = Font()
-                elif name == "Status":
-                    cell.value = status
-                    cell.fill = red_fill if status == "Closed" else green_fill
-                    cell.font = red_status_text if status == "Closed" else green_status_text
+                elif name == "Category": cell.value = cat_val
+                elif name == "Status": cell.value = status
                 elif name == "Remarks":
                     cell.value = apply_rich_remarks(str(row_data.get('Remarks', '') or ''))
                 else:
                     cell.value = row_data.get(name, "")
 
+        # APPLY CONDITIONAL FORMATTING RULES
+        last_row = len(full_data) + 1
+        cat_col_letter = openpyxl.utils.get_column_letter(col_map.get('Category', 19) + 1)
+        stat_col_letter = openpyxl.utils.get_column_letter(col_map.get('Status', 22) + 1)
+
+        # 1. Category Green Rule (Closed/Cancelled)
+        green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        ws.conditional_formatting.add(f'{cat_col_letter}2:{cat_col_letter}{last_row + 100}', 
+            FormulaRule(formula=[f'OR({cat_col_letter}2="JOB CARD CLOSED", {cat_col_letter}2="Cancelled", {cat_col_letter}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
+
+        # 2. Category Blue Rule (Anything Else)
+        blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+        ws.conditional_formatting.add(f'{cat_col_letter}2:{cat_col_letter}{last_row + 100}', 
+            FormulaRule(formula=[f'AND({cat_col_letter}2<>"", {cat_col_letter}2<>"JOB CARD CLOSED", {cat_col_letter}2<>"Cancelled", {cat_col_letter}2<>"CANCELLED")'], fill=blue_fill))
+
+        # 3. Status Rules
+        red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        red_text = Font(color="9C0006", bold=True)
+        ws.conditional_formatting.add(f'{stat_col_letter}2:{stat_col_letter}{last_row + 100}', 
+            FormulaRule(formula=[f'{stat_col_letter}2="Closed"'], fill=red_fill, font=red_text))
+        
+        green_text = Font(color="006100", bold=True)
+        ws.conditional_formatting.add(f'{stat_col_letter}2:{stat_col_letter}{last_row + 100}', 
+            FormulaRule(formula=[f'{stat_col_letter}2="Open"'], fill=green_fill, font=green_text))
+
         output = io.BytesIO()
         wb.save(output)
-        st.success("WIP Summary generated with updated color logic!")
+        st.success("Summary generated with Dynamic Conditional Formatting!")
         st.download_button("📥 Download Final Summary", output.getvalue(), file_name=summary_file.name)
