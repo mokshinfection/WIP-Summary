@@ -8,7 +8,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v15", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v16", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -91,19 +91,15 @@ def process_paycode_report(file_obj):
     return set()
 
 def apply_rich_remarks(text):
-    if not text or not isinstance(text, str): return text
+    if not text or not isinstance(text, str) or text.strip() == "": return text
     red_bold = InlineFont(color="FFFF0000", b=True)
     normal = InlineFont()
     rt = CellRichText()
     
-    # Logic: Everything before '-' is red/bold, and 'Job completed' is red/bold.
     parts = text.split('-', 1)
-    
-    # Process the part before '-' (Red/Bold)
     prefix = parts[0]
     rt.append(TextBlock(red_bold, prefix))
     
-    # Process the part after '-' (Mixed)
     if len(parts) > 1:
         suffix = "-" + parts[1]
         if "Job completed" in suffix:
@@ -116,46 +112,40 @@ def apply_rich_remarks(text):
             rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v15")
+st.title("📊 WIP Summary Consolidator Pro v16")
 
 with st.sidebar:
-    st.header("Upload Center")
+    st.header("Upload Files")
     summary_file = st.file_uploader("1. Existing Summary File", type=["xlsx"])
     open_order_files = st.file_uploader("2. New Open Order Lists", type=["xlsx"], accept_multiple_files=True)
     paycode_file = st.file_uploader("3. Paycodewise Report", type=["xlsx"])
 
-if st.button("Update Summary"):
+if st.button("Generate Consolidated WIP Report"):
     if not summary_file:
         st.warning("Please upload the Summary file.")
     else:
-        # keep_links=True solves the externalLink1.xml repair error
         wb = openpyxl.load_workbook(summary_file, keep_links=True)
         target_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
         ws = wb[target_name]
 
-        # Extract existing data
         rows = list(ws.iter_rows(values_only=True))
         header = rows[0]
         col_map = {name: i for i, name in enumerate(header)}
         existing_data = [{header[i]: val for i, val in enumerate(row)} for row in rows[1:]]
 
-        # Process new files
         new_data = []
         for f in open_order_files:
             new_data.extend(parse_excel_wip(f, f.name))
         
-        # Merge and Filter
-        existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data}
+        existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
         unique_new = [n for n in new_data if str(n['Ord.No.']) not in existing_ids]
         full_data = existing_data + unique_new
         full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
         
         paycode_ids = process_paycode_report(paycode_file)
 
-        # Surgical update to sheet
         ws.delete_rows(2, ws.max_row)
 
-        # Formatting Styles
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
         red_text = Font(color="9C0006", bold=True)
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
@@ -164,16 +154,18 @@ if st.button("Update Summary"):
 
         for r_idx, row_data in enumerate(full_data, start=2):
             ord_no = str(row_data.get('Ord.No.', ''))
-            inv_no = str(row_data.get('Invoice no.', '') or '').strip()
+            # Robust check for Invoice No
+            inv_val_raw = row_data.get('Invoice no.', '')
+            has_inv = inv_val_raw is not None and str(inv_val_raw).strip() != "" and str(inv_val_raw).strip().lower() != 'nan'
             
-            # Logic for Category and Status
-            cat_val = str(row_data.get('Category', '') or '')
+            cat_val = str(row_data.get('Category', '') or '').strip()
             status = "Open"
 
+            # Logic Check
             if ord_no in paycode_ids:
                 cat_val = "Cancelled"
                 status = "Closed"
-            elif inv_no != "":
+            elif has_inv:
                 cat_val = "JOB CARD CLOSED"
                 status = "Closed"
             elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
@@ -181,11 +173,9 @@ if st.button("Update Summary"):
 
             for name, c_idx in col_map.items():
                 cell = ws.cell(row=r_idx, column=c_idx+1)
-                
                 if name == "SNO.": cell.value = r_idx - 1
                 elif name == "Category":
                     cell.value = cat_val
-                    # Clear formatting first
                     cell.fill = none_fill
                     cell.font = Font()
                     if cat_val == "JOB CARD CLOSED":
@@ -205,5 +195,5 @@ if st.button("Update Summary"):
 
         output = io.BytesIO()
         wb.save(output)
-        st.success("Summary Updated Successfully!")
-        st.download_button("📥 Download Repaired Summary", output.getvalue(), file_name=summary_file.name)
+        st.success("Consolidation Complete!")
+        st.download_button("📥 Download Updated Summary", output.getvalue(), file_name=summary_file.name)
