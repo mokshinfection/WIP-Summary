@@ -8,7 +8,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.cell.text import InlineFont
 from datetime import date
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v16", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v17", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -112,7 +112,7 @@ def apply_rich_remarks(text):
             rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v16")
+st.title("📊 WIP Summary Consolidator Pro v17")
 
 with st.sidebar:
     st.header("Upload Files")
@@ -154,20 +154,22 @@ if st.button("Generate Consolidated WIP Report"):
 
         for r_idx, row_data in enumerate(full_data, start=2):
             ord_no = str(row_data.get('Ord.No.', ''))
-            # Robust check for Invoice No
             inv_val_raw = row_data.get('Invoice no.', '')
             has_inv = inv_val_raw is not None and str(inv_val_raw).strip() != "" and str(inv_val_raw).strip().lower() != 'nan'
             
             cat_val = str(row_data.get('Category', '') or '').strip()
             status = "Open"
 
-            # Logic Check
-            if ord_no in paycode_ids:
-                cat_val = "Cancelled"
-                status = "Closed"
-            elif has_inv:
+            # UPDATED LOGIC CHECK
+            # Priority 1: If there is an invoice number, it must be JOB CARD CLOSED
+            if has_inv:
                 cat_val = "JOB CARD CLOSED"
                 status = "Closed"
+            # Priority 2: If in Paycode list AND NOT already JOB CARD CLOSED, it becomes Cancelled
+            elif ord_no in paycode_ids and "JOB CARD CLOSED" not in cat_val.upper():
+                cat_val = "Cancelled"
+                status = "Closed"
+            # Priority 3: Maintain status for manually closed/cancelled items
             elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                 status = "Closed"
 
@@ -195,5 +197,5 @@ if st.button("Generate Consolidated WIP Report"):
 
         output = io.BytesIO()
         wb.save(output)
-        st.success("Consolidation Complete!")
+        st.success("Consolidation Complete with Paycode Logic Updates!")
         st.download_button("📥 Download Updated Summary", output.getvalue(), file_name=summary_file.name)
