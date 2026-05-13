@@ -165,7 +165,7 @@ def apply_rich_remarks(text):
             rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v27")
+st.title("📊 WIP Summary Consolidator")
 
 with st.sidebar:
     st.header("Files")
