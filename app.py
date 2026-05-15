@@ -18,6 +18,10 @@ def extract_area_from_filename(filename):
         return match.group(1).strip()
     parts = filename.replace('.xlsx', '').split(' ')
     return parts[3] if len(parts) >= 4 else "Unknown"
+    # Custom mapping for Hyderabad
+    if area.lower() == "hyderabad":
+        return "HYD"
+    return area
 
 def parse_excel_wip(file_obj, filename):
     """Parses Excel using the scanning logic to find Dealer context and data."""
