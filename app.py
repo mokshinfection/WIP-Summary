@@ -9,9 +9,10 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator ", layout="wide")
 
 def extract_area_from_filename(filename):
+    """Extracts area name from filename and converts Hyderabad to HYD."""
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
     area = "Unknown"
     if match: 
@@ -19,11 +20,13 @@ def extract_area_from_filename(filename):
     else:
         parts = filename.replace('.xlsx', '').split(' ')
         area = parts[3] if len(parts) >= 4 else "Unknown"
+    
     if area.lower() == "hyderabad":
         return "HYD"
     return area
 
 def parse_excel_wip(file_obj, filename):
+    """Parses source lists using the scanning parser logic."""
     try:
         df_raw = pd.read_excel(file_obj, header=None)
     except Exception as e:
@@ -49,6 +52,7 @@ def parse_excel_wip(file_obj, filename):
 
     curr_dname = "Unknown"
     i = header_idx + 1
+    
     while i < len(df_raw):
         row = df_raw.iloc[i]
         if str(row[0]).strip() == 'Dealer':
@@ -56,22 +60,26 @@ def parse_excel_wip(file_obj, filename):
             curr_dname = str(d_val).split('.')[0] if not pd.isna(d_val) else "Unknown"
             i += 1
             continue
+            
         try:
             val_0 = row[0]
             if not pd.isna(val_0) and (isinstance(val_0, (int, float)) or str(val_0).isdigit()):
                 def get_v(label):
                     idx = col_map.get(label)
                     return row[idx] if idx is not None else None
+
                 ord_no = str(get_v('Ord.No.')).split('.')[0]
                 cr_dt_raw = get_v('Cr.Dt')
+                
                 calc_pending = ""
                 if cr_dt_raw:
                     try:
                         creation_date = pd.to_datetime(cr_dt_raw).date()
                         calc_pending = int((today - creation_date).days)
                     except:
-                        try: calc_pending = int(float(val_0))
+                        try: calc_pending = int(float(str(val_0)))
                         except: calc_pending = val_0
+
                 record = {
                     "SNO.": "",
                     "Pending Days": calc_pending,
@@ -96,6 +104,7 @@ def parse_excel_wip(file_obj, filename):
                     "Date": "",
                     "Status": "Open"
                 }
+                
                 if i + 1 < len(df_raw):
                     next_row_vals = [str(x).strip() for x in df_raw.iloc[i+1]]
                     if 'Notes' in next_row_vals:
@@ -142,7 +151,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator")
+st.title("📊 WIP Summary Consolidator ")
 
 with st.sidebar:
     st.header("Files")
@@ -157,9 +166,11 @@ if st.button("Generate Final Report"):
         wb = openpyxl.load_workbook(summary_file, keep_links=True)
         target_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
         ws = wb[target_name]
+
         data_rows = list(ws.iter_rows(values_only=True))
         header_ws = data_rows[0]
         col_map_ws = {name: i for i, name in enumerate(header_ws)}
+        
         existing_data = []
         for row in data_rows[1:]:
             d = {header_ws[i]: val for i, val in enumerate(row)}
@@ -167,23 +178,25 @@ if st.button("Generate Final Report"):
                 try: d['Pending Days'] = int(float(str(d['Pending Days'])))
                 except: pass
             existing_data.append(d)
+
         new_data_raw = []
         for f in open_order_files:
             new_data_raw.extend(parse_excel_wip(f, f.name))
+        
         existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
         unique_new = [n for n in new_data_raw if str(n['Ord.No.']) not in existing_ids]
         full_data = existing_data + unique_new
         full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
         
-        # Determine latest date
-        date_objs = []
+        # Latest Date Detection strictly from Cr.Dt
+        cr_dates = []
         for r in full_data:
-            for d_col in ['Date', 'Cr.Dt']:
-                if r.get(d_col):
-                    try: date_objs.append(pd.to_datetime(r[d_col]))
-                    except: pass
-        latest_dt = max(date_objs) if date_objs else datetime.now()
+            if r.get('Cr.Dt'):
+                try: cr_dates.append(pd.to_datetime(r['Cr.Dt']))
+                except: pass
+        latest_dt = max(cr_dates) if cr_dates else datetime.now()
         dt_str = latest_dt.strftime("%d/%m/%Y")
+        dt_sheet = latest_dt.strftime("%d.%m.%y")
         dt_file = latest_dt.strftime("%d_%m_%Y")
         
         paycode_ids = process_paycode_report(paycode_file)
@@ -219,23 +232,27 @@ if st.button("Generate Final Report"):
                 else: cell.value = val
                 if name in date_cols and cell.value: cell.number_format = 'mm-dd-yy'
 
-        # Update Summary Sheet Titles
-        for sname in wb.sheetnames:
+        # Rename Sheets and Update Cell Titles
+        for sname in list(wb.sheetnames):
             if "Summary WIP" in sname:
                 curr_ws = wb[sname]
+                # Update cell B2
                 title_prefix = "South Region WIP - Number of Job Cards as on " if "NO of JC" in sname else "South Region WIP as on "
                 curr_ws['B2'] = f"{title_prefix}{dt_str}"
+                # Rename Tab (e.g. Summary WIP 07.05.26)
+                base_name = "Summary WIP NO of JC" if "NO of JC" in sname else "Summary WIP"
+                curr_ws.title = f"{base_name} {dt_sheet}"
 
         last_row = len(full_data) + 1
         cat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Category', 19) + 1)
         stat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Status', 22) + 1)
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 500}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 500}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
-        ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 500}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
-        ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 500}', FormulaRule(formula=[f'{stat_let}2="Open"'], fill=green_fill, font=green_text))
+        ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
+        ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Open"'], fill=green_fill, font=green_text))
 
         output = io.BytesIO()
         wb.save(output)
-        st.success(f"Report updated with latest date: {dt_str}")
+        st.success(f"Workbook updated based on Cr.Dt: {dt_str}")
         st.download_button("📥 Download Final Summary", output.getvalue(), file_name=f"South_Region_WIP_Summary_{dt_file}.xlsx")
