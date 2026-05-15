@@ -23,6 +23,8 @@ def extract_area_from_filename(filename):
     
     if area.lower() == "hyderabad":
         return "HYD"
+    if area.upper() == "A.P":
+        return "Nellore"
     return area
 
 def parse_excel_wip(file_obj, filename):
