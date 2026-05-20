@@ -9,10 +9,10 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator ", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v32", layout="wide")
 
 def extract_area_from_filename(filename):
-    """Extracts area name from filename and converts Hyderabad to HYD."""
+    """Extracts area name from filename and handles custom mappings."""
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
     area = "Unknown"
     if match: 
@@ -21,10 +21,8 @@ def extract_area_from_filename(filename):
         parts = filename.replace('.xlsx', '').split(' ')
         area = parts[3] if len(parts) >= 4 else "Unknown"
     
-    if area.lower() == "hyderabad":
-        return "HYD"
-    if area.upper() == "A.P":
-        return "Nellore"
+    if area.lower() == "hyderabad": return "HYD"
+    if area.upper() == "A.P": return "Nellore"
     return area
 
 def parse_excel_wip(file_obj, filename):
@@ -122,6 +120,7 @@ def parse_excel_wip(file_obj, filename):
     return data
 
 def process_paycode_report(file_obj):
+    if not file_obj: return set()
     try:
         df_raw = pd.read_excel(file_obj, header=None)
         header_row = -1
@@ -153,44 +152,71 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator ")
+st.title("📊 WIP Summary Consolidator Pro v32")
 
 with st.sidebar:
     st.header("Files")
-    summary_file = st.file_uploader("1. Existing Summary File", type=["xlsx"])
+    summary_file = st.file_uploader("1. Existing Summary File (Optional)", type=["xlsx"])
     open_order_files = st.file_uploader("2. New Open Order Lists", type=["xlsx"], accept_multiple_files=True)
-    paycode_file = st.file_uploader("3. Paycodewise Report", type=["xlsx"])
+    paycode_file = st.file_uploader("3. Paycodewise Report (Optional)", type=["xlsx"])
 
 if st.button("Generate Final Report"):
-    if not summary_file:
-        st.warning("Please upload the Summary file.")
+    if not open_order_files and not summary_file:
+        st.warning("Please upload at least the New Open Order Lists or a Summary file.")
     else:
-        wb = openpyxl.load_workbook(summary_file, keep_links=True)
-        target_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
-        ws = wb[target_name]
-
-        data_rows = list(ws.iter_rows(values_only=True))
-        header_ws = data_rows[0]
-        col_map_ws = {name: i for i, name in enumerate(header_ws)}
-        
         existing_data = []
-        for row in data_rows[1:]:
-            d = {header_ws[i]: val for i, val in enumerate(row)}
-            if 'Pending Days' in d and d['Pending Days'] is not None:
-                try: d['Pending Days'] = int(float(str(d['Pending Days'])))
-                except: pass
-            existing_data.append(d)
+        wb = None
+        target_name = "Master Data"
+        
+        # Standard headers if generating from scratch
+        std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status']
+
+        if summary_file:
+            wb = openpyxl.load_workbook(summary_file, keep_links=True)
+            target_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
+            ws = wb[target_name]
+
+            data_rows = list(ws.iter_rows(values_only=True))
+            if data_rows:
+                header_ws = data_rows[0]
+                col_map_ws = {name: i for i, name in enumerate(header_ws)}
+                
+                for row in data_rows[1:]:
+                    d = {header_ws[i]: val for i, val in enumerate(row)}
+                    if d.get('Area') == "A.P": d['Area'] = "Nellore"
+                    if d.get('Area') == "Hyderabad": d['Area'] = "HYD"
+                    if d.get('Dealer Name') == "A.P": d['Dealer Name'] = "Nellore"
+                    if d.get('Dealer Name') == "Hyderabad": d['Dealer Name'] = "HYD"
+                    
+                    if 'Pending Days' in d and d['Pending Days'] is not None:
+                        try: d['Pending Days'] = int(float(str(d['Pending Days'])))
+                        except: pass
+                    existing_data.append(d)
+        else:
+            # Create fresh workbook
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Master Data"
+            col_map_ws = {name: i for i, name in enumerate(std_headers)}
+            
+            # Format Headers
+            header_fill = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF")
+            for col_idx, col_name in enumerate(std_headers, start=1):
+                cell = ws.cell(row=1, column=col_idx, value=col_name)
+                cell.fill = header_fill
+                cell.font = header_font
 
         new_data_raw = []
-        for f in open_order_files:
-            new_data_raw.extend(parse_excel_wip(f, f.name))
+        if open_order_files:
+            for f in open_order_files:
+                new_data_raw.extend(parse_excel_wip(f, f.name))
         
         existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
         unique_new = [n for n in new_data_raw if str(n['Ord.No.']) not in existing_ids]
         full_data = existing_data + unique_new
         full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
         
-        # Latest Date Detection strictly from Cr.Dt
         cr_dates = []
         for r in full_data:
             if r.get('Cr.Dt'):
@@ -202,6 +228,7 @@ if st.button("Generate Final Report"):
         dt_file = latest_dt.strftime("%d_%m_%Y")
         
         paycode_ids = process_paycode_report(paycode_file)
+        
         if ws.max_row > 1: ws.delete_rows(2, ws.max_row - 1)
 
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
@@ -234,16 +261,18 @@ if st.button("Generate Final Report"):
                 else: cell.value = val
                 if name in date_cols and cell.value: cell.number_format = 'mm-dd-yy'
 
-        # Rename Sheets and Update Cell Titles
-        for sname in list(wb.sheetnames):
-            if "Summary WIP" in sname:
-                curr_ws = wb[sname]
-                # Update cell B2
-                title_prefix = "South Region WIP - Number of Job Cards as on " if "NO of JC" in sname else "South Region WIP as on "
-                curr_ws['B2'] = f"{title_prefix}{dt_str}"
-                # Rename Tab (e.g. Summary WIP 07.05.26)
-                base_name = "Summary WIP NO of JC" if "NO of JC" in sname else "Summary WIP"
-                curr_ws.title = f"{base_name} {dt_sheet}"
+        if summary_file:
+            for sname in list(wb.sheetnames):
+                if "Summary WIP" in sname:
+                    curr_ws = wb[sname]
+                    title_prefix = "South Region WIP - Number of Job Cards as on " if "NO of JC" in sname else "South Region WIP as on "
+                    curr_ws['B2'] = f"{title_prefix}{dt_str}"
+                    base_name = "Summary WIP NO of JC" if "NO of JC" in sname else "Summary WIP"
+                    curr_ws.title = f"{base_name} {dt_sheet}"
+        
+        # Add auto filter if it's a new file
+        if not summary_file:
+            ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(std_headers))}{len(full_data) + 1}"
 
         last_row = len(full_data) + 1
         cat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Category', 19) + 1)
@@ -256,5 +285,9 @@ if st.button("Generate Final Report"):
 
         output = io.BytesIO()
         wb.save(output)
-        st.success(f"Workbook updated based on Cr.Dt: {dt_str}")
-        st.download_button("📥 Download Final Summary", output.getvalue(), file_name=f"South_Region_WIP_Summary_{dt_file}.xlsx")
+        
+        if summary_file: st.success(f"Workbook updated based on Cr.Dt: {dt_str}")
+        else: st.success(f"New Master Data generated from scratch for Date: {dt_str}")
+        
+        download_name = f"South_Region_WIP_Summary_{dt_file}.xlsx"
+        st.download_button("📥 Download Final Report", output.getvalue(), file_name=download_name)
