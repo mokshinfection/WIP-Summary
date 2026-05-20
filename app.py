@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator ", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v33", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -51,13 +51,20 @@ def parse_excel_wip(file_obj, filename):
     if header_idx == -1: return []
 
     curr_dname = "Unknown"
+    curr_dealer = "Unknown"
     i = header_idx + 1
     
     while i < len(df_raw):
         row = df_raw.iloc[i]
         if str(row[0]).strip() == 'Dealer':
+            # Extract Dname
             d_val = df_raw.iloc[i, 6]
             curr_dname = str(d_val).split('.')[0] if not pd.isna(d_val) else "Unknown"
+            
+            # Extract Actual Dealer Name
+            dlr_val = df_raw.iloc[i, 7]
+            curr_dealer = str(dlr_val).strip() if not pd.isna(dlr_val) else "Unknown"
+            
             i += 1
             continue
             
@@ -86,7 +93,7 @@ def parse_excel_wip(file_obj, filename):
                     "D.Code &JC NO.": f"{curr_dname}{ord_no}",
                     "Dname": curr_dname,
                     "Area": area,
-                    "Dealer Name": area,
+                    "Dealer Name": curr_dealer,  # REVERTED TO PROPER EXTRACTION
                     "Req. Delv. Dt": get_v('Req. Delv. Dt'),
                     "Cr.Dt": cr_dt_raw,
                     "Total": get_v('Total'),
@@ -152,7 +159,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator ")
+st.title("📊 WIP Summary Consolidator Pro v33")
 
 with st.sidebar:
     st.header("Files")
@@ -168,7 +175,6 @@ if st.button("Generate Final Report"):
         wb = None
         target_name = "Master Data"
         
-        # Standard headers if generating from scratch
         std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status']
 
         if summary_file:
@@ -185,21 +191,17 @@ if st.button("Generate Final Report"):
                     d = {header_ws[i]: val for i, val in enumerate(row)}
                     if d.get('Area') == "A.P": d['Area'] = "Nellore"
                     if d.get('Area') == "Hyderabad": d['Area'] = "HYD"
-                    if d.get('Dealer Name') == "A.P": d['Dealer Name'] = "Nellore"
-                    if d.get('Dealer Name') == "Hyderabad": d['Dealer Name'] = "HYD"
                     
                     if 'Pending Days' in d and d['Pending Days'] is not None:
                         try: d['Pending Days'] = int(float(str(d['Pending Days'])))
                         except: pass
                     existing_data.append(d)
         else:
-            # Create fresh workbook
             wb = openpyxl.Workbook()
             ws = wb.active
             ws.title = "Master Data"
             col_map_ws = {name: i for i, name in enumerate(std_headers)}
             
-            # Format Headers
             header_fill = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
             header_font = Font(bold=True, color="FFFFFF")
             for col_idx, col_name in enumerate(std_headers, start=1):
@@ -270,7 +272,6 @@ if st.button("Generate Final Report"):
                     base_name = "Summary WIP NO of JC" if "NO of JC" in sname else "Summary WIP"
                     curr_ws.title = f"{base_name} {dt_sheet}"
         
-        # Add auto filter if it's a new file
         if not summary_file:
             ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(std_headers))}{len(full_data) + 1}"
 
