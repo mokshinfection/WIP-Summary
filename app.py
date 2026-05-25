@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v41", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v43", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -39,6 +39,16 @@ def to_numeric(val):
             return float(s)
         except ValueError:
             return str(val).strip()
+
+def clean_date_string(val):
+    """Cleans hidden tab characters, newlines, and trailing spaces from dates to prevent formatting corruption."""
+    if val is None or pd.isna(val): return None
+    s = str(val).strip().replace('\t', '').replace('\n', '')
+    if not s or s.lower() in ['nan', 'none', '']: return None
+    try:
+        return pd.to_datetime(s).date()
+    except:
+        return s
 
 def parse_excel_wip(file_obj, filename):
     """Parses source lists using the scanning parser logic."""
@@ -89,16 +99,14 @@ def parse_excel_wip(file_obj, filename):
                     return row[idx] if idx is not None else None
 
                 ord_no = str(get_v('Ord.No.')).split('.')[0].strip()
-                cr_dt_raw = get_v('Cr.Dt')
+                cr_dt_raw = clean_date_string(get_v('Cr.Dt'))
                 
                 calc_pending = ""
-                if cr_dt_raw:
-                    try:
-                        creation_date = pd.to_datetime(cr_dt_raw).date()
-                        calc_pending = int((today - creation_date).days)
-                    except:
-                        try: calc_pending = int(float(str(val_0)))
-                        except: calc_pending = val_0
+                if cr_dt_raw and isinstance(cr_dt_raw, date):
+                    calc_pending = int((today - cr_dt_raw).days)
+                else:
+                    try: calc_pending = int(float(str(val_0)))
+                    except: calc_pending = val_0
 
                 record = {
                     "SNO.": "",
@@ -107,7 +115,7 @@ def parse_excel_wip(file_obj, filename):
                     "Dname": curr_dname,
                     "Area": area,
                     "Dealer Name": curr_dealer,
-                    "Req. Delv. Dt": get_v('Req. Delv. Dt'),
+                    "Req. Delv. Dt": clean_date_string(get_v('Req. Delv. Dt')),
                     "Cr.Dt": cr_dt_raw,
                     "Total": get_v('Total'),
                     "PartsTotal": get_v('PartsTotal'),
@@ -140,7 +148,7 @@ def parse_excel_wip(file_obj, filename):
     return data
 
 def process_paycode_report(file_obj):
-    """Finds headers inside first 25 rows and extracts invoice number and date."""
+    """Finds headers inside first 25 rows and extracts invoice number and date cleanly."""
     if not file_obj: return {}
     try:
         df_raw = pd.read_excel(file_obj, header=None)
@@ -163,14 +171,12 @@ def process_paycode_report(file_obj):
                         date_idx = idx
                 break
                 
-        # Correct for structural shifts (Invoice number column)
         if header_row != -1 and inv_idx > 0:
             left_col_count = df_raw.iloc[header_row+1:, inv_idx-1].dropna().count()
             curr_col_count = df_raw.iloc[header_row+1:, inv_idx].dropna().count()
             if left_col_count > curr_col_count:
                 inv_idx = inv_idx - 1
                 
-        # Correct for structural shifts (Invoice date column if shifted relative to header name)
         if header_row != -1 and date_idx > 0:
             left_dt_count = df_raw.iloc[header_row+1:, date_idx-1].dropna().count()
             curr_dt_count = df_raw.iloc[header_row+1:, date_idx].dropna().count()
@@ -198,8 +204,8 @@ def process_paycode_report(file_obj):
                 dt_val = None
                 if date_idx != -1:
                     raw_dt = df_raw.iloc[i, date_idx]
-                    if not pd.isna(raw_dt) and str(raw_dt).strip().lower() not in ['nan', 'none', '']:
-                        dt_val = raw_dt
+                    if not pd.isna(raw_dt):
+                        dt_val = clean_date_string(raw_dt)
                             
                 if ord_val not in paycode_dict:
                     paycode_dict[ord_val] = {"invoice": [], "date": None}
@@ -232,7 +238,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v41")
+st.title("📊 WIP Summary Consolidator Pro v43")
 
 with st.sidebar:
     st.header("Files")
@@ -242,7 +248,7 @@ with st.sidebar:
 
 if st.button("Generate Final Report"):
     if not open_order_files and not summary_file:
-        st.warning("Please upload at least the New Open Order Lists or a Summary file.")
+        st.warning("Please upload least the New Open Order Lists or a Summary file.")
     else:
         existing_data = []
         wb = None
@@ -266,6 +272,10 @@ if st.button("Generate Final Report"):
                     if d.get('Area') == "A.P": d['Area'] = "Nellore"
                     if d.get('Area') == "Hyderabad": d['Area'] = "HYD"
                     
+                    # Clean up existing dates read from file
+                    for k in ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']:
+                        if d.get(k): d[k] = clean_date_string(d[k])
+
                     if 'Pending Days' in d and d['Pending Days'] is not None:
                         try: d['Pending Days'] = int(float(str(d['Pending Days'])))
                         except: pass
@@ -291,15 +301,13 @@ if st.button("Generate Final Report"):
         existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
         unique_new = [n for n in new_data_raw if str(n['Ord.No.']) not in existing_ids]
         
-        # FIXED: Resolved layout text truncation syntax collision here
         full_data = existing_data + unique_new
         full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
         
         cr_dates = []
         for r in full_data:
-            if r.get('Cr.Dt'):
-                try: cr_dates.append(pd.to_datetime(r['Cr.Dt']))
-                except: pass
+            if r.get('Cr.Dt') and isinstance(r['Cr.Dt'], date):
+                cr_dates.append(pd.to_datetime(r['Cr.Dt']))
         latest_dt = max(cr_dates) if cr_dates else datetime.now()
         dt_str = latest_dt.strftime("%d/%m/%Y")
         dt_sheet = latest_dt.strftime("%d.%m.%y")
@@ -320,7 +328,7 @@ if st.button("Generate Final Report"):
             inv_no_raw = row_data.get('Invoice no.', '')
             existing_date_val = row_data.get('Date', '')
             inv_list = []
-            final_date_val = existing_date_val
+            final_date_val = clean_date_string(existing_date_val)
             has_cancelled_keyword = False
 
             if not pd.isna(inv_no_raw) and str(inv_no_raw).strip().lower() not in ['nan', 'none', '']:
@@ -339,7 +347,7 @@ if st.button("Generate Final Report"):
                     elif not inv_list:
                         inv_list.append(inv)
                         if p_info["date"]:
-                            final_date_val = p_info["date"]
+                            final_date_val = clean_date_string(p_info["date"])
                         
             final_inv_no = inv_list[0] if inv_list else ""
             has_inv = len(inv_list) > 0
@@ -365,8 +373,9 @@ if st.button("Generate Final Report"):
                 elif name == "Status": cell.value = status
                 elif str(name).lower() == "invoice no.": 
                     cell.value = to_numeric(final_inv_no)
-                elif name == "Date":
-                    cell.value = final_date_val
+                    cell.number_format = '0'
+                elif name in date_cols:
+                    cell.value = clean_date_string(val) if name != "Date" else final_date_val
                 elif name == "Pending Days":
                     try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" else ""
                     except: cell.value = val
@@ -377,7 +386,8 @@ if st.button("Generate Final Report"):
                     else:
                         cell.value = val
                 
-                if name in date_cols and cell.value: cell.number_format = 'mm-dd-yy'
+                if name in date_cols and cell.value: 
+                    cell.number_format = 'mm-dd-yy'
 
         if summary_file:
             for sname in list(wb.sheetnames):
@@ -410,3 +420,6 @@ if st.button("Generate Final Report"):
         
         download_name = f"South_Region_WIP_Summary_{dt_file}.xlsx"
         st.download_button("📥 Download Final Report", output.getvalue(), file_name=download_name)
+'''
+with open('app.py', 'w') as f:
+    f.write(new_code_v43)}
