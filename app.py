@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v39", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator ", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -215,7 +215,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title(" 📊 WIP Summary Consolidator Pro v39")
+st.title(" 📊 WIP Summary Consolidator ")
 
 with st.sidebar:
     st.header("Files")
