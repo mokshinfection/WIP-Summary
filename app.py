@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v34", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v35", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -176,7 +176,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v34")
+st.title("📊 WIP Summary Consolidator")
 
 with st.sidebar:
     st.header("Files")
@@ -262,13 +262,22 @@ if st.button("Generate Final Report"):
             # --- INVOICE EXTRACTION AND MERGE LOGIC ---
             inv_no_raw = row_data.get('Invoice no.', '')
             inv_list = []
+            has_cancelled_keyword = False
+
             if not pd.isna(inv_no_raw) and str(inv_no_raw).strip().lower() not in ['nan', 'none', '']:
-                inv_list = [i.strip() for i in str(inv_no_raw).split(',') if i.strip()]
+                for i in str(inv_no_raw).split(','):
+                    i_clean = i.strip()
+                    if i_clean.upper() == 'CANCELLED':
+                        has_cancelled_keyword = True
+                    elif i_clean:
+                        inv_list.append(i_clean)
             
             # Check Paycode Data for additional invoices
             if ord_no in paycode_data:
                 for inv in paycode_data[ord_no]:
-                    if inv not in inv_list:
+                    if inv.upper() == 'CANCELLED':
+                        has_cancelled_keyword = True
+                    elif inv not in inv_list:
                         inv_list.append(inv)
                         
             final_inv_no = ", ".join(inv_list)
@@ -281,7 +290,7 @@ if st.button("Generate Final Report"):
             # Update Category / Status Based on Invoice & Paycode Match
             if has_inv:
                 cat_val, status = "JOB CARD CLOSED", "Closed"
-            elif ord_no in paycode_data and "JOB CARD CLOSED" not in cat_val.upper():
+            elif has_cancelled_keyword or (ord_no in paycode_data and "JOB CARD CLOSED" not in cat_val.upper()):
                 cat_val, status = "Cancelled", "Closed"
             elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                 status = "Closed"
@@ -293,7 +302,7 @@ if st.button("Generate Final Report"):
                 if name == "SNO.": cell.value = r_idx - 1
                 elif name == "Category": cell.value = cat_val
                 elif name == "Status": cell.value = status
-                elif str(name).lower() == "invoice no.": cell.value = final_inv_no  # Write Updated Invoices
+                elif str(name).lower() == "invoice no.": cell.value = final_inv_no  # Write Updated Invoices without "CANCELLED"
                 elif name == "Pending Days":
                     try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" else ""
                     except: cell.value = val
