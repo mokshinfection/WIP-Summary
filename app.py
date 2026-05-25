@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator ", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v40", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -140,7 +140,7 @@ def parse_excel_wip(file_obj, filename):
     return data
 
 def process_paycode_report(file_obj):
-    """Finds headers inside first 25 rows and auto-corrects for structural layout cell shifts."""
+    """Finds headers inside first 25 rows and extracts invoice number and date."""
     if not file_obj: return {}
     try:
         df_raw = pd.read_excel(file_obj, header=None)
@@ -148,6 +148,7 @@ def process_paycode_report(file_obj):
         header_row = -1
         ord_idx = -1
         inv_idx = -1
+        date_idx = -1
         
         for i in range(min(25, len(df_raw))):
             row_vals = [str(x).strip() for x in df_raw.iloc[i].values]
@@ -158,16 +159,24 @@ def process_paycode_report(file_obj):
                 for idx, val in enumerate(row_vals):
                     if "Inv.No" in val or "Invoice" in val:
                         inv_idx = idx
-                        break
+                    if "Invoicedt" in val or "Invoice Dt" in val or "Inv.Dt" in val:
+                        date_idx = idx
                 break
                 
-        # FIXED: Correct for structural system offsets where text header is column-shifted 
+        # Correct for structural shifts (Invoice number column)
         if header_row != -1 and inv_idx > 0:
             left_col_count = df_raw.iloc[header_row+1:, inv_idx-1].dropna().count()
             curr_col_count = df_raw.iloc[header_row+1:, inv_idx].dropna().count()
             if left_col_count > curr_col_count:
-                inv_idx = inv_idx - 1 # Dynamically map to the populated column
+                inv_idx = inv_idx - 1
                 
+        # Correct for structural shifts (Invoice date column if shifted relative to header name)
+        if header_row != -1 and date_idx > 0:
+            left_dt_count = df_raw.iloc[header_row+1:, date_idx-1].dropna().count()
+            curr_dt_count = df_raw.iloc[header_row+1:, date_idx].dropna().count()
+            if left_dt_count > curr_dt_count:
+                date_idx = date_idx - 1
+
         paycode_dict = {}
         if header_row != -1 and ord_idx != -1:
             for i in range(header_row + 1, len(df_raw)):
@@ -186,12 +195,20 @@ def process_paycode_report(file_obj):
                         if i_str.lower() not in ['nan', 'none', '']:
                             inv_val = i_str
                             
+                dt_val = None
+                if date_idx != -1:
+                    raw_dt = df_raw.iloc[i, date_idx]
+                    if not pd.isna(raw_dt) and str(raw_dt).strip().lower() not in ['nan', 'none', '']:
+                        dt_val = raw_dt
+                            
                 if ord_val not in paycode_dict:
-                    paycode_dict[ord_val] = []
+                    paycode_dict[ord_val] = {"invoice": [], "date": None}
                     
                 if inv_val:
-                    if len(paycode_dict[ord_val]) == 0:
-                        paycode_dict[ord_val].append(inv_val)
+                    if len(paycode_dict[ord_val]["invoice"]) == 0:
+                        paycode_dict[ord_val]["invoice"].append(inv_val)
+                        if dt_val:
+                            paycode_dict[ord_val]["date"] = dt_val
                         
         return paycode_dict
     except Exception as e:
@@ -215,7 +232,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title(" 📊 WIP Summary Consolidator ")
+st.title("📊 WIP Summary Consolidator Pro v40")
 
 with st.sidebar:
     st.header("Files")
@@ -273,8 +290,7 @@ if st.button("Generate Final Report"):
         
         existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
         unique_new = [n for n in new_data_raw if str(n['Ord.No.']) not in existing_ids]
-        full_data = existing_data + unique_new
-        full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
+        full_data = existing_data + unique_new Full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
         
         cr_dates = []
         for r in full_data:
@@ -286,6 +302,7 @@ if st.button("Generate Final Report"):
         dt_sheet = latest_dt.strftime("%d.%m.%y")
         dt_file = latest_dt.strftime("%d_%m_%Y")
         
+        # Paycode Extraction (maps order number to invoice and date info)
         paycode_data = process_paycode_report(paycode_file)
         
         if ws.max_row > 1: ws.delete_rows(2, ws.max_row - 1)
@@ -298,8 +315,11 @@ if st.button("Generate Final Report"):
         for r_idx, row_data in enumerate(full_data, start=2):
             ord_no = str(row_data.get('Ord.No.', '')).split('.')[0].strip()
             
+            # --- INVOICE AND DATE EXTRACTION LOGIC ---
             inv_no_raw = row_data.get('Invoice no.', '')
+            existing_date_val = row_data.get('Date', '')
             inv_list = []
+            final_date_val = existing_date_val
             has_cancelled_keyword = False
 
             if not pd.isna(inv_no_raw) and str(inv_no_raw).strip().lower() not in ['nan', 'none', '']:
@@ -310,12 +330,16 @@ if st.button("Generate Final Report"):
                     elif i_clean and not inv_list:
                         inv_list.append(i_clean)
             
+            # Extract both Invoice No. And Invoice Date from Paycode Report match
             if ord_no in paycode_data:
-                for inv in paycode_data[ord_no]:
+                p_info = paycode_data[ord_no]
+                for inv in p_info["invoice"]:
                     if inv.upper() == 'CANCELLED':
                         has_cancelled_keyword = True
                     elif not inv_list:
                         inv_list.append(inv)
+                        if p_info["date"]:
+                            final_date_val = p_info["date"]
                         
             final_inv_no = inv_list[0] if inv_list else ""
             has_inv = len(inv_list) > 0
@@ -341,6 +365,8 @@ if st.button("Generate Final Report"):
                 elif name == "Status": cell.value = status
                 elif str(name).lower() == "invoice no.": 
                     cell.value = to_numeric(final_inv_no)
+                elif name == "Date":
+                    cell.value = final_date_val
                 elif name == "Pending Days":
                     try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" else ""
                     except: cell.value = val
