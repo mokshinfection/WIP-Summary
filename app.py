@@ -4,12 +4,10 @@ import io
 import openpyxl
 import re
 from openpyxl.styles import Font, PatternFill
-from openpyxl.cell.rich_text import CellRichText, TextBlock
-from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v49", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v50", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -151,11 +149,9 @@ def parse_excel_wip(file_obj, filename):
     return data
 
 def process_paycode_report(file_obj):
-    """Finds headers inside first 25 rows and extracts invoice number and date cleanly without column name collisions."""
     if not file_obj: return {}
     try:
         df_raw = pd.read_excel(file_obj, header=None)
-        
         header_row = -1
         ord_idx = -1
         inv_idx = -1
@@ -224,22 +220,22 @@ def process_paycode_report(file_obj):
 
 def apply_rich_remarks(text):
     if not text or not isinstance(text, str) or text.strip() == "": return text
-    red_bold = InlineFont(color="FFFF0000", b=True)
-    normal = InlineFont()
-    rt = CellRichText()
+    red_bold = openpyxl.styles.Font(color="FFFF0000", b=True)
+    normal = openpyxl.styles.Font()
+    rt = openpyxl.cell.rich_text.CellRichText()
     parts = text.split('-', 1)
-    rt.append(TextBlock(red_bold, parts[0]))
+    rt.append(openpyxl.cell.rich_text.TextBlock(red_bold, parts[0]))
     if len(parts) > 1:
         suffix = "-" + parts[1]
         if "Job completed" in suffix:
             sub_parts = suffix.split("Job completed")
             for idx, p in enumerate(sub_parts):
-                rt.append(TextBlock(normal, p))
-                if idx < len(sub_parts) - 1: rt.append(TextBlock(red_bold, "Job completed"))
-        else: rt.append(TextBlock(normal, suffix))
+                rt.append(openpyxl.cell.rich_text.TextBlock(normal, p))
+                if idx < len(sub_parts) - 1: rt.append(openpyxl.cell.rich_text.TextBlock(red_bold, "Job completed"))
+        else: rt.append(openpyxl.cell.rich_text.TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v49")
+st.title("📊 WIP Summary Consolidator ")
 
 with st.sidebar:
     st.header("Files")
@@ -249,7 +245,7 @@ with st.sidebar:
 
 if st.button("Generate Final Report"):
     if not open_order_files and not summary_file:
-        st.warning("Please upload at least the New Open Order Lists or a Summary file.")
+        st.warning("Please upload files to proceed.")
     else:
         existing_data = []
         wb = None
@@ -313,7 +309,6 @@ if st.button("Generate Final Report"):
         dt_sheet = latest_dt.strftime("%d.%m.%y")
         dt_file = latest_dt.strftime("%d_%m_%Y")
         
-        # Pull multi-record paycode context map
         paycode_data = process_paycode_report(paycode_file)
         
         if ws.max_row > 1: ws.delete_rows(2, ws.max_row - 1)
@@ -341,7 +336,6 @@ if st.button("Generate Final Report"):
                     elif i_clean and not any(c in i_clean for c in ['-', ':']) and not inv_list:
                         inv_list.append(i_clean)
             
-            # Sequence validation tracking variables
             has_correct_sequence = False
             has_invalid_sequence = False
             matched_inv = ""
@@ -377,29 +371,21 @@ if st.button("Generate Final Report"):
             final_inv_no = inv_list[0] if inv_list else ""
             has_inv = len(inv_list) > 0
 
-            # --- DYNAMIC RE-CLASSIFICATION SEQUENCE ENGINE (FIXED FOR CANCELLED PRESERVATION) ---
             if has_inv:
-                # If an invoice number is present/found, it ALWAYS upgrades to JOB CARD CLOSED
                 cat_val = "JOB CARD CLOSED"
                 status = "Closed"
             else:
-                # Pull the category string from existing history
                 orig_cat = str(row_data.get('Category', '') or '').strip()
-                
-                # FIXED: If it's ALREADY labeled as "Cancelled", preserve it! Don't clear it out to blank.
                 if orig_cat.upper() in ["CANCELLED", "CANCEL"]:
                     cat_val = "Cancelled"
                     status = "Closed"
                 else:
                     cat_val = orig_cat
                     status = "Open"
-                    
-                    # Sequence-driven classification logic gates for non-cancelled historical data
                     if has_invalid_sequence and has_correct_sequence:
                         cat_val = "Cancelled"
                         status = "Closed"
                     elif has_invalid_sequence and not has_correct_sequence:
-                        # Mismatch date layout only -> safe to wipe to blank / clean open tracking
                         cat_val = ""
                         status = "Open"
                     elif has_cancelled_keyword:
@@ -407,13 +393,14 @@ if st.button("Generate Final Report"):
                         status = "Closed"
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
-            # ----------------------------------------------------------------------------------
 
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
                 val = row_data.get(name, "")
                 
-                if name == "SNO.": cell.value = r_idx - 1
+                # FIXED: The SNO. index is recalculated dynamically using r_idx across both old and new records
+                if name == "SNO.": 
+                    cell.value = r_idx - 1
                 elif name == "Category": cell.value = cat_val
                 elif name == "Status": cell.value = status
                 elif str(name).lower() == "invoice no.": 
