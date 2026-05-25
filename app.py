@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v45", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v46", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -241,7 +241,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v45")
+st.title("📊 WIP Summary Consolidator Pro v46")
 
 with st.sidebar:
     st.header("Files")
@@ -350,16 +350,11 @@ if st.button("Generate Final Report"):
                     elif not inv_list:
                         potential_date = clean_date_string(p_info["date"])
                         
-                        # VALIDATION: Only consider invoice closed if invoice date is AFTER or EQUAL to job card creation date
                         if isinstance(creation_date, date) and isinstance(potential_date, date):
                             if potential_date >= creation_date:
                                 inv_list.append(inv)
                                 final_date_val = potential_date
-                            else:
-                                # Fraudulent/mismatched prior date found, ignore this invoice match
-                                pass
                         else:
-                            # If dates aren't comparative types, default allow
                             inv_list.append(inv)
                             final_date_val = potential_date
                         
@@ -386,11 +381,11 @@ if st.button("Generate Final Report"):
                 elif name == "Category": cell.value = cat_val
                 elif name == "Status": cell.value = status
                 elif str(name).lower() == "invoice no.": 
-                    # CRITICAL FIX: Save as pure text string to permanently break Excel auto-date conversion masking bugs
-                    cell.value = str(final_inv_no).strip() if final_inv_no else ""
+                    # CRITICAL FIX: Explicitly strip, set format, and write as text layout to override persistent cell format cache
                     cell.number_format = '@'
-                elif name in date_cols:
-                    cell.value = clean_date_string(val) if name != "Date" else final_date_val
+                    cell.value = str(final_inv_no).strip() if final_inv_no else ""
+                elif name == "Date":
+                    cell.value = final_date_val
                 elif name == "Pending Days":
                     try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" else ""
                     except: cell.value = val
@@ -419,7 +414,12 @@ if st.button("Generate Final Report"):
         last_row = len(full_data) + 1
         cat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Category', 19) + 1)
         stat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Status', 22) + 1)
+        inv_let = openpyxl.utils.get_column_letter(col_map_ws.get('Invoice no.', 20) + 1)
         
+        # FORCE ALL CELLS IN INVOICE COLUMN TO TEXT STANDARD FORMAT AS A POST-PASS OPERATION
+        for r in range(2, last_row + 5):
+            ws[f"{inv_let}{r}"].number_format = '@'
+
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
         
