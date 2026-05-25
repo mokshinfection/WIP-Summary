@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v40", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v41", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -232,7 +232,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v40")
+st.title("📊 WIP Summary Consolidator Pro v41")
 
 with st.sidebar:
     st.header("Files")
@@ -290,7 +290,10 @@ if st.button("Generate Final Report"):
         
         existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
         unique_new = [n for n in new_data_raw if str(n['Ord.No.']) not in existing_ids]
-        full_data = existing_data + unique_new Full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
+        
+        # FIXED: Resolved layout text truncation syntax collision here
+        full_data = existing_data + unique_new
+        full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
         
         cr_dates = []
         for r in full_data:
@@ -302,7 +305,6 @@ if st.button("Generate Final Report"):
         dt_sheet = latest_dt.strftime("%d.%m.%y")
         dt_file = latest_dt.strftime("%d_%m_%Y")
         
-        # Paycode Extraction (maps order number to invoice and date info)
         paycode_data = process_paycode_report(paycode_file)
         
         if ws.max_row > 1: ws.delete_rows(2, ws.max_row - 1)
@@ -315,7 +317,6 @@ if st.button("Generate Final Report"):
         for r_idx, row_data in enumerate(full_data, start=2):
             ord_no = str(row_data.get('Ord.No.', '')).split('.')[0].strip()
             
-            # --- INVOICE AND DATE EXTRACTION LOGIC ---
             inv_no_raw = row_data.get('Invoice no.', '')
             existing_date_val = row_data.get('Date', '')
             inv_list = []
@@ -330,7 +331,6 @@ if st.button("Generate Final Report"):
                     elif i_clean and not inv_list:
                         inv_list.append(i_clean)
             
-            # Extract both Invoice No. And Invoice Date from Paycode Report match
             if ord_no in paycode_data:
                 p_info = paycode_data[ord_no]
                 for inv in p_info["invoice"]:
