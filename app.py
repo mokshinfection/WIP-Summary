@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v48", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v49", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -239,7 +239,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v48")
+st.title("📊 WIP Summary Consolidator Pro v49")
 
 with st.sidebar:
     st.header("Files")
@@ -348,7 +348,6 @@ if st.button("Generate Final Report"):
             matched_dt = None
 
             if ord_no in paycode_data:
-                # Iterate through ALL occurrences of this order number in the paycode dump
                 for record_item in paycode_data[ord_no]:
                     inv = record_item["invoice"]
                     potential_date = record_item["date"]
@@ -366,7 +365,6 @@ if st.button("Generate Final Report"):
                         else:
                             has_invalid_sequence = True
                     else:
-                        # Default fallback if dates are uncomparable types
                         has_correct_sequence = True
                         if not matched_inv:
                             matched_inv = inv
@@ -379,29 +377,37 @@ if st.button("Generate Final Report"):
             final_inv_no = inv_list[0] if inv_list else ""
             has_inv = len(inv_list) > 0
 
-            # --- DYNAMIC RE-CLASSIFICATION SEQUENCE ENGINE ---
+            # --- DYNAMIC RE-CLASSIFICATION SEQUENCE ENGINE (FIXED FOR CANCELLED PRESERVATION) ---
             if has_inv:
+                # If an invoice number is present/found, it ALWAYS upgrades to JOB CARD CLOSED
                 cat_val = "JOB CARD CLOSED"
                 status = "Closed"
             else:
-                cat_val = str(row_data.get('Category', '') or '').strip()
-                status = "Open"
+                # Pull the category string from existing history
+                orig_cat = str(row_data.get('Category', '') or '').strip()
                 
-                # Check sequence profile triggers
-                if has_invalid_sequence and has_correct_sequence:
-                    # There is an old mismatch AND a valid new sequence -> Mark as Cancelled
+                # FIXED: If it's ALREADY labeled as "Cancelled", preserve it! Don't clear it out to blank.
+                if orig_cat.upper() in ["CANCELLED", "CANCEL"]:
                     cat_val = "Cancelled"
                     status = "Closed"
-                elif has_invalid_sequence and not has_correct_sequence:
-                    # Mismatch ONLY, no overlapping true sequence exists -> Leave Blank / Clean Open
-                    cat_val = ""
+                else:
+                    cat_val = orig_cat
                     status = "Open"
-                elif has_cancelled_keyword:
-                    cat_val = "Cancelled"
-                    status = "Closed"
-                elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
-                    status = "Closed"
-            # --------------------------------------------------
+                    
+                    # Sequence-driven classification logic gates for non-cancelled historical data
+                    if has_invalid_sequence and has_correct_sequence:
+                        cat_val = "Cancelled"
+                        status = "Closed"
+                    elif has_invalid_sequence and not has_correct_sequence:
+                        # Mismatch date layout only -> safe to wipe to blank / clean open tracking
+                        cat_val = ""
+                        status = "Open"
+                    elif has_cancelled_keyword:
+                        cat_val = "Cancelled"
+                        status = "Closed"
+                    elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
+                        status = "Closed"
+            # ----------------------------------------------------------------------------------
 
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
