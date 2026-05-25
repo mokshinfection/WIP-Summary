@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v46", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v47", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -151,7 +151,7 @@ def parse_excel_wip(file_obj, filename):
     return data
 
 def process_paycode_report(file_obj):
-    """Finds headers inside first 25 rows and extracts invoice number and date cleanly."""
+    """Finds headers inside first 25 rows and extracts invoice number and date cleanly without column name collisions."""
     if not file_obj: return {}
     try:
         df_raw = pd.read_excel(file_obj, header=None)
@@ -168,10 +168,12 @@ def process_paycode_report(file_obj):
                 ord_idx = row_vals.index("Ord.ID")
                 
                 for idx, val in enumerate(row_vals):
-                    if "Inv.No" in val or "Invoice" in val:
-                        inv_idx = idx
-                    if "Invoicedt" in val or "Invoice Dt" in val or "Inv.Dt" in val:
+                    v_lower = val.lower()
+                    # FIXED: Prevent substring collision by checking for the full 'invoicedt' pattern first
+                    if "invoicedt" in v_lower or "invoice dt" in v_lower or "inv.dt" in v_lower:
                         date_idx = idx
+                    elif "inv.no" in v_lower or "invoice" in v_lower or "inv no" in v_lower:
+                        inv_idx = idx
                 break
                 
         if header_row != -1 and inv_idx > 0:
@@ -241,7 +243,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v46")
+st.title("📊 WIP Summary Consolidator Pro v47")
 
 with st.sidebar:
     st.header("Files")
@@ -339,7 +341,8 @@ if st.button("Generate Final Report"):
                     i_clean = i.strip()
                     if i_clean.upper() == 'CANCELLED':
                         has_cancelled_keyword = True
-                    elif i_clean and not inv_list:
+                    # FIXED: If existing row contains a corrupted timestamp layout, treat it as empty to let paycode report overwrite it
+                    elif i_clean and not any(c in i_clean for c in ['-', ':']):
                         inv_list.append(i_clean)
             
             if ord_no in paycode_data:
@@ -381,7 +384,6 @@ if st.button("Generate Final Report"):
                 elif name == "Category": cell.value = cat_val
                 elif name == "Status": cell.value = status
                 elif str(name).lower() == "invoice no.": 
-                    # CRITICAL FIX: Explicitly strip, set format, and write as text layout to override persistent cell format cache
                     cell.number_format = '@'
                     cell.value = str(final_inv_no).strip() if final_inv_no else ""
                 elif name == "Date":
@@ -416,12 +418,11 @@ if st.button("Generate Final Report"):
         stat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Status', 22) + 1)
         inv_let = openpyxl.utils.get_column_letter(col_map_ws.get('Invoice no.', 20) + 1)
         
-        # FORCE ALL CELLS IN INVOICE COLUMN TO TEXT STANDARD FORMAT AS A POST-PASS OPERATION
         for r in range(2, last_row + 5):
             ws[f"{inv_let}{r}"].number_format = '@'
 
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2="CANCELLED")'], fill=blue_fill))
         
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
         ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
