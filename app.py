@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v47", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v48", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -169,7 +169,6 @@ def process_paycode_report(file_obj):
                 
                 for idx, val in enumerate(row_vals):
                     v_lower = val.lower()
-                    # FIXED: Prevent substring collision by checking for the full 'invoicedt' pattern first
                     if "invoicedt" in v_lower or "invoice dt" in v_lower or "inv.dt" in v_lower:
                         date_idx = idx
                     elif "inv.no" in v_lower or "invoice" in v_lower or "inv no" in v_lower:
@@ -213,13 +212,10 @@ def process_paycode_report(file_obj):
                         dt_val = clean_date_string(raw_dt)
                             
                 if ord_val not in paycode_dict:
-                    paycode_dict[ord_val] = {"invoice": [], "date": None}
+                    paycode_dict[ord_val] = []
                     
-                if inv_val:
-                    if len(paycode_dict[ord_val]["invoice"]) == 0:
-                        paycode_dict[ord_val]["invoice"].append(inv_val)
-                        if dt_val:
-                            paycode_dict[ord_val]["date"] = dt_val
+                if inv_val or dt_val:
+                    paycode_dict[ord_val].append({"invoice": inv_val, "date": dt_val})
                         
         return paycode_dict
     except Exception as e:
@@ -243,7 +239,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v47")
+st.title("📊 WIP Summary Consolidator Pro v48")
 
 with st.sidebar:
     st.header("Files")
@@ -317,6 +313,7 @@ if st.button("Generate Final Report"):
         dt_sheet = latest_dt.strftime("%d.%m.%y")
         dt_file = latest_dt.strftime("%d_%m_%Y")
         
+        # Pull multi-record paycode context map
         paycode_data = process_paycode_report(paycode_file)
         
         if ws.max_row > 1: ws.delete_rows(2, ws.max_row - 1)
@@ -341,41 +338,71 @@ if st.button("Generate Final Report"):
                     i_clean = i.strip()
                     if i_clean.upper() == 'CANCELLED':
                         has_cancelled_keyword = True
-                    # FIXED: If existing row contains a corrupted timestamp layout, treat it as empty to let paycode report overwrite it
-                    elif i_clean and not any(c in i_clean for c in ['-', ':']):
+                    elif i_clean and not any(c in i_clean for c in ['-', ':']) and not inv_list:
                         inv_list.append(i_clean)
             
+            # Sequence validation tracking variables
+            has_correct_sequence = False
+            has_invalid_sequence = False
+            matched_inv = ""
+            matched_dt = None
+
             if ord_no in paycode_data:
-                p_info = paycode_data[ord_no]
-                for inv in p_info["invoice"]:
-                    if inv.upper() == 'CANCELLED':
+                # Iterate through ALL occurrences of this order number in the paycode dump
+                for record_item in paycode_data[ord_no]:
+                    inv = record_item["invoice"]
+                    potential_date = record_item["date"]
+                    
+                    if inv and inv.upper() == 'CANCELLED':
                         has_cancelled_keyword = True
-                    elif not inv_list:
-                        potential_date = clean_date_string(p_info["date"])
+                        continue
                         
-                        if isinstance(creation_date, date) and isinstance(potential_date, date):
-                            if potential_date >= creation_date:
-                                inv_list.append(inv)
-                                final_date_val = potential_date
+                    if isinstance(creation_date, date) and isinstance(potential_date, date):
+                        if potential_date >= creation_date:
+                            has_correct_sequence = True
+                            if not matched_inv:
+                                matched_inv = inv
+                                matched_dt = potential_date
                         else:
-                            inv_list.append(inv)
-                            final_date_val = potential_date
-                        
+                            has_invalid_sequence = True
+                    else:
+                        # Default fallback if dates are uncomparable types
+                        has_correct_sequence = True
+                        if not matched_inv:
+                            matched_inv = inv
+                            matched_dt = potential_date
+
+            if has_correct_sequence and matched_inv and not inv_list:
+                inv_list.append(matched_inv)
+                final_date_val = matched_dt
+
             final_inv_no = inv_list[0] if inv_list else ""
             has_inv = len(inv_list) > 0
 
+            # --- DYNAMIC RE-CLASSIFICATION SEQUENCE ENGINE ---
             if has_inv:
                 cat_val = "JOB CARD CLOSED"
                 status = "Closed"
             else:
                 cat_val = str(row_data.get('Category', '') or '').strip()
                 status = "Open"
-                if has_cancelled_keyword or (ord_no in paycode_data and "JOB CARD CLOSED" not in cat_val.upper()):
+                
+                # Check sequence profile triggers
+                if has_invalid_sequence and has_correct_sequence:
+                    # There is an old mismatch AND a valid new sequence -> Mark as Cancelled
+                    cat_val = "Cancelled"
+                    status = "Closed"
+                elif has_invalid_sequence and not has_correct_sequence:
+                    # Mismatch ONLY, no overlapping true sequence exists -> Leave Blank / Clean Open
+                    cat_val = ""
+                    status = "Open"
+                elif has_cancelled_keyword:
                     cat_val = "Cancelled"
                     status = "Closed"
                 elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                     status = "Closed"
-                
+            # --------------------------------------------------
+
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
                 val = row_data.get(name, "")
