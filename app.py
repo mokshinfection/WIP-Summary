@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v35", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v36", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -176,7 +176,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator")
+st.title("📊 WIP Summary Consolidator Pro v36")
 
 with st.sidebar:
     st.header("Files")
@@ -284,16 +284,20 @@ if st.button("Generate Final Report"):
             has_inv = len(inv_list) > 0
             # ------------------------------------------
 
-            cat_val = str(row_data.get('Category', '') or '').strip()
-            status = "Open"
-            
-            # Update Category / Status Based on Invoice & Paycode Match
+            # ALWAYS OVERRIDE CATEGORY IF INVOICE EXISTS (Regardless of existing text)
             if has_inv:
-                cat_val, status = "JOB CARD CLOSED", "Closed"
-            elif has_cancelled_keyword or (ord_no in paycode_data and "JOB CARD CLOSED" not in cat_val.upper()):
-                cat_val, status = "Cancelled", "Closed"
-            elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
+                cat_val = "JOB CARD CLOSED"
                 status = "Closed"
+            else:
+                cat_val = str(row_data.get('Category', '') or '').strip()
+                status = "Open"
+                
+                # Check for cancellations ONLY IF no invoice exists
+                if has_cancelled_keyword or (ord_no in paycode_data and "JOB CARD CLOSED" not in cat_val.upper()):
+                    cat_val = "Cancelled"
+                    status = "Closed"
+                elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
+                    status = "Closed"
                 
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
@@ -302,7 +306,7 @@ if st.button("Generate Final Report"):
                 if name == "SNO.": cell.value = r_idx - 1
                 elif name == "Category": cell.value = cat_val
                 elif name == "Status": cell.value = status
-                elif str(name).lower() == "invoice no.": cell.value = final_inv_no  # Write Updated Invoices without "CANCELLED"
+                elif str(name).lower() == "invoice no.": cell.value = final_inv_no
                 elif name == "Pending Days":
                     try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" else ""
                     except: cell.value = val
