@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v33", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v34", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -75,7 +75,7 @@ def parse_excel_wip(file_obj, filename):
                     idx = col_map.get(label)
                     return row[idx] if idx is not None else None
 
-                ord_no = str(get_v('Ord.No.')).split('.')[0]
+                ord_no = str(get_v('Ord.No.')).split('.')[0].strip()
                 cr_dt_raw = get_v('Cr.Dt')
                 
                 calc_pending = ""
@@ -93,7 +93,7 @@ def parse_excel_wip(file_obj, filename):
                     "D.Code &JC NO.": f"{curr_dname}{ord_no}",
                     "Dname": curr_dname,
                     "Area": area,
-                    "Dealer Name": curr_dealer,  # REVERTED TO PROPER EXTRACTION
+                    "Dealer Name": curr_dealer,
                     "Req. Delv. Dt": get_v('Req. Delv. Dt'),
                     "Cr.Dt": cr_dt_raw,
                     "Total": get_v('Total'),
@@ -127,7 +127,8 @@ def parse_excel_wip(file_obj, filename):
     return data
 
 def process_paycode_report(file_obj):
-    if not file_obj: return set()
+    """Extracts Order IDs and Invoice Numbers from Paycodewise report."""
+    if not file_obj: return {}
     try:
         df_raw = pd.read_excel(file_obj, header=None)
         header_row = -1
@@ -138,9 +139,25 @@ def process_paycode_report(file_obj):
         if header_row != -1:
             df = df_raw.iloc[header_row+1:].copy()
             df.columns = df_raw.iloc[header_row].values
-            return set(df['Ord.ID'].dropna().astype(str).unique())
+            
+            paycode_dict = {}
+            if 'Ord.ID' in df.columns:
+                for _, row in df.iterrows():
+                    ord_id = str(row['Ord.ID']).split('.')[0].strip() if pd.notnull(row['Ord.ID']) else None
+                    
+                    inv_val = None
+                    if 'Inv.No.' in df.columns:
+                        inv_val = str(row['Inv.No.']).split('.')[0].strip() if pd.notnull(row['Inv.No.']) else None
+                        
+                    if ord_id and ord_id.lower() != 'nan':
+                        if ord_id not in paycode_dict:
+                            paycode_dict[ord_id] = []
+                        if inv_val and inv_val.lower() not in ['nan', 'none', '']:
+                            if inv_val not in paycode_dict[ord_id]:
+                                paycode_dict[ord_id].append(inv_val)
+            return paycode_dict
     except: pass
-    return set()
+    return {}
 
 def apply_rich_remarks(text):
     if not text or not isinstance(text, str) or text.strip() == "": return text
@@ -159,7 +176,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v33")
+st.title("📊 WIP Summary Consolidator Pro v34")
 
 with st.sidebar:
     st.header("Files")
@@ -229,7 +246,8 @@ if st.button("Generate Final Report"):
         dt_sheet = latest_dt.strftime("%d.%m.%y")
         dt_file = latest_dt.strftime("%d_%m_%Y")
         
-        paycode_ids = process_paycode_report(paycode_file)
+        # EXTRACT PAYCODE DICTIONARY {Ord.ID: [Invoice1, Invoice2]}
+        paycode_data = process_paycode_report(paycode_file)
         
         if ws.max_row > 1: ws.delete_rows(2, ws.max_row - 1)
 
@@ -239,28 +257,49 @@ if st.button("Generate Final Report"):
         date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
 
         for r_idx, row_data in enumerate(full_data, start=2):
-            ord_no = str(row_data.get('Ord.No.', ''))
-            inv_no = row_data.get('Invoice no.', '')
-            has_inv = inv_no is not None and str(inv_no).strip() != "" and str(inv_no).strip().lower() != 'nan'
+            ord_no = str(row_data.get('Ord.No.', '')).split('.')[0].strip()
+            
+            # --- INVOICE EXTRACTION AND MERGE LOGIC ---
+            inv_no_raw = row_data.get('Invoice no.', '')
+            inv_list = []
+            if not pd.isna(inv_no_raw) and str(inv_no_raw).strip().lower() not in ['nan', 'none', '']:
+                inv_list = [i.strip() for i in str(inv_no_raw).split(',') if i.strip()]
+            
+            # Check Paycode Data for additional invoices
+            if ord_no in paycode_data:
+                for inv in paycode_data[ord_no]:
+                    if inv not in inv_list:
+                        inv_list.append(inv)
+                        
+            final_inv_no = ", ".join(inv_list)
+            has_inv = len(inv_list) > 0
+            # ------------------------------------------
+
             cat_val = str(row_data.get('Category', '') or '').strip()
             status = "Open"
+            
+            # Update Category / Status Based on Invoice & Paycode Match
             if has_inv:
                 cat_val, status = "JOB CARD CLOSED", "Closed"
-            elif ord_no in paycode_ids and "JOB CARD CLOSED" not in cat_val.upper():
+            elif ord_no in paycode_data and "JOB CARD CLOSED" not in cat_val.upper():
                 cat_val, status = "Cancelled", "Closed"
             elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                 status = "Closed"
+                
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
                 val = row_data.get(name, "")
+                
                 if name == "SNO.": cell.value = r_idx - 1
                 elif name == "Category": cell.value = cat_val
                 elif name == "Status": cell.value = status
+                elif str(name).lower() == "invoice no.": cell.value = final_inv_no  # Write Updated Invoices
                 elif name == "Pending Days":
                     try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" else ""
                     except: cell.value = val
                 elif name == "Remarks": cell.value = apply_rich_remarks(str(val or ''))
                 else: cell.value = val
+                
                 if name in date_cols and cell.value: cell.number_format = 'mm-dd-yy'
 
         if summary_file:
@@ -278,8 +317,10 @@ if st.button("Generate Final Report"):
         last_row = len(full_data) + 1
         cat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Category', 19) + 1)
         stat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Status', 22) + 1)
+        
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
+        
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
         ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
         ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Open"'], fill=green_fill, font=green_text))
