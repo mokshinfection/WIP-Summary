@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v37", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v38", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -32,11 +32,9 @@ def to_numeric(val):
     s = str(val).strip().replace(',', '')
     if not s or s.lower() in ['nan', 'none']: return ""
     
-    # Try integer first
     try:
         return int(s)
     except ValueError:
-        # Try float
         try:
             return float(s)
         except ValueError:
@@ -142,56 +140,57 @@ def parse_excel_wip(file_obj, filename):
     return data
 
 def process_paycode_report(file_obj):
-    """Robust extractor that handles multi-table dumps and takes ONLY the first invoice."""
+    """Strictly searches the first 25 rows for Ord.ID and extracts only from that specific column."""
     if not file_obj: return {}
     try:
         df_raw = pd.read_excel(file_obj, header=None)
         
-        # Scan for the very first header row containing Ord.ID
         header_row = -1
-        for i in range(min(50, len(df_raw))):
+        ord_idx = -1
+        inv_idx = -1
+        
+        # 1. Strictly scan ONLY the first 25 rows
+        for i in range(min(25, len(df_raw))):
             row_vals = [str(x).strip() for x in df_raw.iloc[i].values]
             if "Ord.ID" in row_vals:
                 header_row = i
+                ord_idx = row_vals.index("Ord.ID")
+                
+                # Locate the Invoice column in the same header row
+                for idx, val in enumerate(row_vals):
+                    if "Inv.No" in val or "Invoice" in val:
+                        inv_idx = idx
+                        break
                 break
                 
         paycode_dict = {}
-        if header_row != -1:
-            row_vals = [str(x).strip() for x in df_raw.iloc[header_row].values]
-            ord_idx = row_vals.index("Ord.ID") if "Ord.ID" in row_vals else -1
-            
-            inv_idx = -1
-            for idx, val in enumerate(row_vals):
-                if "Inv.No" in val or "Invoice" in val:
-                    inv_idx = idx
-                    break
+        
+        # 2. Extract ONLY from the specific columns identified
+        if header_row != -1 and ord_idx != -1:
+            for i in range(header_row + 1, len(df_raw)):
+                ord_raw = df_raw.iloc[i, ord_idx]
+                if pd.isna(ord_raw): continue
+                
+                ord_val = str(ord_raw).split('.')[0].strip()
+                if not ord_val or ord_val.lower() in ['nan', 'ord.id', 'none']:
+                    continue
                     
-            if ord_idx != -1:
-                # Iterate linearly through the whole file to catch all tables below
-                for i in range(header_row + 1, len(df_raw)):
-                    ord_raw = df_raw.iloc[i, ord_idx]
-                    if pd.isna(ord_raw): continue
+                inv_val = None
+                if inv_idx != -1:
+                    raw_inv = df_raw.iloc[i, inv_idx]
+                    if not pd.isna(raw_inv):
+                        i_str = str(raw_inv).split('.')[0].strip()
+                        if i_str.lower() not in ['nan', 'none', '']:
+                            inv_val = i_str
+                            
+                if ord_val not in paycode_dict:
+                    paycode_dict[ord_val] = []
                     
-                    ord_val = str(ord_raw).split('.')[0].strip()
-                    # Skip sub-header rows that repeat 'Ord.ID' or empty
-                    if not ord_val or ord_val.lower() in ['nan', 'ord.id', 'none']:
-                        continue
+                if inv_val:
+                    # Keep ONLY the first invoice found for an order
+                    if len(paycode_dict[ord_val]) == 0:
+                        paycode_dict[ord_val].append(inv_val)
                         
-                    inv_val = None
-                    if inv_idx != -1:
-                        raw_inv = df_raw.iloc[i, inv_idx]
-                        if not pd.isna(raw_inv):
-                            i_str = str(raw_inv).split('.')[0].strip()
-                            if i_str.lower() not in ['nan', 'none', '']:
-                                inv_val = i_str
-                                
-                    if ord_val not in paycode_dict:
-                        paycode_dict[ord_val] = []
-                        
-                    if inv_val:
-                        # ONLY TAKE THE FIRST INVOICE WE ENCOUNTER FOR THIS ORDER
-                        if len(paycode_dict[ord_val]) == 0:
-                            paycode_dict[ord_val].append(inv_val)
         return paycode_dict
     except Exception as e:
         pass
@@ -214,7 +213,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v37")
+st.title("📊 WIP Summary Consolidator Pro v38")
 
 with st.sidebar:
     st.header("Files")
@@ -285,7 +284,6 @@ if st.button("Generate Final Report"):
         dt_sheet = latest_dt.strftime("%d.%m.%y")
         dt_file = latest_dt.strftime("%d_%m_%Y")
         
-        # EXTRACT PAYCODE DICTIONARY {Ord.ID: [First_Invoice_Only]}
         paycode_data = process_paycode_report(paycode_file)
         
         if ws.max_row > 1: ws.delete_rows(2, ws.max_row - 1)
@@ -298,7 +296,6 @@ if st.button("Generate Final Report"):
         for r_idx, row_data in enumerate(full_data, start=2):
             ord_no = str(row_data.get('Ord.No.', '')).split('.')[0].strip()
             
-            # --- INVOICE EXTRACTION LOGIC (Single Invoice Enforced) ---
             inv_no_raw = row_data.get('Invoice no.', '')
             inv_list = []
             has_cancelled_keyword = False
@@ -309,23 +306,18 @@ if st.button("Generate Final Report"):
                     if i_clean.upper() == 'CANCELLED':
                         has_cancelled_keyword = True
                     elif i_clean and not inv_list:
-                        # only take first if existing data had it
                         inv_list.append(i_clean)
             
-            # Check Paycode Data 
             if ord_no in paycode_data:
                 for inv in paycode_data[ord_no]:
                     if inv.upper() == 'CANCELLED':
                         has_cancelled_keyword = True
                     elif not inv_list:
-                        # only append if we don't have an invoice yet
                         inv_list.append(inv)
                         
             final_inv_no = inv_list[0] if inv_list else ""
             has_inv = len(inv_list) > 0
-            # --------------------------------------------------------
 
-            # ALWAYS OVERRIDE CATEGORY IF INVOICE EXISTS 
             if has_inv:
                 cat_val = "JOB CARD CLOSED"
                 status = "Closed"
@@ -352,7 +344,6 @@ if st.button("Generate Final Report"):
                     except: cell.value = val
                 elif name == "Remarks": cell.value = apply_rich_remarks(str(val or ''))
                 else: 
-                    # Ensure numbers are saved as numbers (removes the Excel text warning)
                     if name in numeric_cols:
                         cell.value = to_numeric(val)
                     else:
