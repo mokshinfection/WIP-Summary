@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v44", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v45", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -43,6 +43,9 @@ def to_numeric(val):
 def clean_date_string(val):
     """Cleans hidden tab characters, newlines, and trailing spaces from dates to prevent formatting corruption."""
     if val is None or pd.isna(val): return None
+    if isinstance(val, (datetime, date)):
+        if hasattr(val, 'date'): return val.date()
+        return val
     s = str(val).strip().replace('\t', '').replace('\n', '')
     if not s or s.lower() in ['nan', 'none', '']: return None
     try:
@@ -238,7 +241,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v44")
+st.title("📊 WIP Summary Consolidator Pro v45")
 
 with st.sidebar:
     st.header("Files")
@@ -255,7 +258,7 @@ if st.button("Generate Final Report"):
         target_name = "Master Data"
         
         std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status']
-        numeric_cols = ['SNO.', 'Total', 'PartsTotal', 'Ord.No.', 'Cust.No', 'Invoice no.', 'Dname', 'D.Code &JC NO.']
+        numeric_cols = ['SNO.', 'Total', 'PartsTotal', 'Ord.No.', 'Cust.No', 'Dname']
 
         if summary_file:
             wb = openpyxl.load_workbook(summary_file, keep_links=True)
@@ -323,6 +326,7 @@ if st.button("Generate Final Report"):
 
         for r_idx, row_data in enumerate(full_data, start=2):
             ord_no = str(row_data.get('Ord.No.', '')).split('.')[0].strip()
+            creation_date = clean_date_string(row_data.get('Cr.Dt'))
             
             inv_no_raw = row_data.get('Invoice no.', '')
             existing_date_val = row_data.get('Date', '')
@@ -344,9 +348,20 @@ if st.button("Generate Final Report"):
                     if inv.upper() == 'CANCELLED':
                         has_cancelled_keyword = True
                     elif not inv_list:
-                        inv_list.append(inv)
-                        if p_info["date"]:
-                            final_date_val = clean_date_string(p_info["date"])
+                        potential_date = clean_date_string(p_info["date"])
+                        
+                        # VALIDATION: Only consider invoice closed if invoice date is AFTER or EQUAL to job card creation date
+                        if isinstance(creation_date, date) and isinstance(potential_date, date):
+                            if potential_date >= creation_date:
+                                inv_list.append(inv)
+                                final_date_val = potential_date
+                            else:
+                                # Fraudulent/mismatched prior date found, ignore this invoice match
+                                pass
+                        else:
+                            # If dates aren't comparative types, default allow
+                            inv_list.append(inv)
+                            final_date_val = potential_date
                         
             final_inv_no = inv_list[0] if inv_list else ""
             has_inv = len(inv_list) > 0
@@ -371,8 +386,9 @@ if st.button("Generate Final Report"):
                 elif name == "Category": cell.value = cat_val
                 elif name == "Status": cell.value = status
                 elif str(name).lower() == "invoice no.": 
-                    cell.value = to_numeric(final_inv_no)
-                    cell.number_format = '0'
+                    # CRITICAL FIX: Save as pure text string to permanently break Excel auto-date conversion masking bugs
+                    cell.value = str(final_inv_no).strip() if final_inv_no else ""
+                    cell.number_format = '@'
                 elif name in date_cols:
                     cell.value = clean_date_string(val) if name != "Date" else final_date_val
                 elif name == "Pending Days":
