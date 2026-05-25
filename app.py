@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v43", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v44", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -238,7 +238,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v43")
+st.title("📊 WIP Summary Consolidator Pro v44")
 
 with st.sidebar:
     st.header("Files")
@@ -248,7 +248,7 @@ with st.sidebar:
 
 if st.button("Generate Final Report"):
     if not open_order_files and not summary_file:
-        st.warning("Please upload least the New Open Order Lists or a Summary file.")
+        st.warning("Please upload at least the New Open Order Lists or a Summary file.")
     else:
         existing_data = []
         wb = None
@@ -272,7 +272,6 @@ if st.button("Generate Final Report"):
                     if d.get('Area') == "A.P": d['Area'] = "Nellore"
                     if d.get('Area') == "Hyderabad": d['Area'] = "HYD"
                     
-                    # Clean up existing dates read from file
                     for k in ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']:
                         if d.get(k): d[k] = clean_date_string(d[k])
 
@@ -420,6 +419,3 @@ if st.button("Generate Final Report"):
         
         download_name = f"South_Region_WIP_Summary_{dt_file}.xlsx"
         st.download_button("📥 Download Final Report", output.getvalue(), file_name=download_name)
-'''
-with open('app.py', 'w') as f:
-    f.write(new_code_v43)}
