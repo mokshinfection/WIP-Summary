@@ -4,10 +4,12 @@ import io
 import openpyxl
 import re
 from openpyxl.styles import Font, PatternFill
+from openpyxl.cell.text import InlineFont
+from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v50", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v51", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -220,22 +222,22 @@ def process_paycode_report(file_obj):
 
 def apply_rich_remarks(text):
     if not text or not isinstance(text, str) or text.strip() == "": return text
-    red_bold = openpyxl.styles.Font(color="FFFF0000", b=True)
-    normal = openpyxl.styles.Font()
-    rt = openpyxl.cell.rich_text.CellRichText()
+    red_bold = InlineFont(color="FFFF0000", b=True)
+    normal = InlineFont()
+    rt = CellRichText()
     parts = text.split('-', 1)
-    rt.append(openpyxl.cell.rich_text.TextBlock(red_bold, parts[0]))
+    rt.append(TextBlock(red_bold, parts[0]))
     if len(parts) > 1:
         suffix = "-" + parts[1]
         if "Job completed" in suffix:
             sub_parts = suffix.split("Job completed")
             for idx, p in enumerate(sub_parts):
-                rt.append(openpyxl.cell.rich_text.TextBlock(normal, p))
-                if idx < len(sub_parts) - 1: rt.append(openpyxl.cell.rich_text.TextBlock(red_bold, "Job completed"))
-        else: rt.append(openpyxl.cell.rich_text.TextBlock(normal, suffix))
+                rt.append(TextBlock(normal, p))
+                if idx < len(sub_parts) - 1: rt.append(TextBlock(red_bold, "Job completed"))
+        else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator ")
+st.title("📊 WIP Summary Consolidator Pro v51")
 
 with st.sidebar:
     st.header("Files")
@@ -398,7 +400,6 @@ if st.button("Generate Final Report"):
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
                 val = row_data.get(name, "")
                 
-                # FIXED: The SNO. index is recalculated dynamically using r_idx across both old and new records
                 if name == "SNO.": 
                     cell.value = r_idx - 1
                 elif name == "Category": cell.value = cat_val
