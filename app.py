@@ -9,7 +9,7 @@ from openpyxl.cell.text import InlineFont
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v38", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v39", layout="wide")
 
 def extract_area_from_filename(filename):
     """Extracts area name from filename and handles custom mappings."""
@@ -140,7 +140,7 @@ def parse_excel_wip(file_obj, filename):
     return data
 
 def process_paycode_report(file_obj):
-    """Strictly searches the first 25 rows for Ord.ID and extracts only from that specific column."""
+    """Finds headers inside first 25 rows and auto-corrects for structural layout cell shifts."""
     if not file_obj: return {}
     try:
         df_raw = pd.read_excel(file_obj, header=None)
@@ -149,23 +149,26 @@ def process_paycode_report(file_obj):
         ord_idx = -1
         inv_idx = -1
         
-        # 1. Strictly scan ONLY the first 25 rows
         for i in range(min(25, len(df_raw))):
             row_vals = [str(x).strip() for x in df_raw.iloc[i].values]
             if "Ord.ID" in row_vals:
                 header_row = i
                 ord_idx = row_vals.index("Ord.ID")
                 
-                # Locate the Invoice column in the same header row
                 for idx, val in enumerate(row_vals):
                     if "Inv.No" in val or "Invoice" in val:
                         inv_idx = idx
                         break
                 break
                 
+        # FIXED: Correct for structural system offsets where text header is column-shifted 
+        if header_row != -1 and inv_idx > 0:
+            left_col_count = df_raw.iloc[header_row+1:, inv_idx-1].dropna().count()
+            curr_col_count = df_raw.iloc[header_row+1:, inv_idx].dropna().count()
+            if left_col_count > curr_col_count:
+                inv_idx = inv_idx - 1 # Dynamically map to the populated column
+                
         paycode_dict = {}
-        
-        # 2. Extract ONLY from the specific columns identified
         if header_row != -1 and ord_idx != -1:
             for i in range(header_row + 1, len(df_raw)):
                 ord_raw = df_raw.iloc[i, ord_idx]
@@ -187,7 +190,6 @@ def process_paycode_report(file_obj):
                     paycode_dict[ord_val] = []
                     
                 if inv_val:
-                    # Keep ONLY the first invoice found for an order
                     if len(paycode_dict[ord_val]) == 0:
                         paycode_dict[ord_val].append(inv_val)
                         
@@ -213,7 +215,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v38")
+st.title(" 📊 WIP Summary Consolidator Pro v39")
 
 with st.sidebar:
     st.header("Files")
