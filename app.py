@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v56", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v57", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -89,7 +89,6 @@ def parse_excel_wip(file_obj, filename):
             elif len(row_list_clean) == 2:
                 raw_dealer_str = row_list_clean[1]
                 
-            # NEW DATA EXTRACTOR RULES: TEXTBEFORE and TEXTAFTER parsing logic applied strictly to incoming streams
             if '|' in raw_dealer_str:
                 parts = [p.strip() for p in raw_dealer_str.split('|')]
                 curr_dname = parts[0]
@@ -141,7 +140,7 @@ def parse_excel_wip(file_obj, filename):
                     "Invoice no.": "",
                     "Date": "",
                     "Status": "Open",
-                    "IS_NEW_RECORD": True # Flag tag to protect historical data integrity from overrides
+                    "IS_NEW_RECORD": True
                 }
                 
                 if i + 1 < len(df_raw):
@@ -245,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v56")
+st.title("📊 WIP Summary Consolidator Pro v57")
 
 with st.sidebar:
     st.header("Files")
@@ -262,7 +261,7 @@ if st.button("Generate Final Report"):
         target_name = "Master Data"
         
         std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status']
-        numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
+        numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO', 'DNAME']
 
         if summary_file:
             wb = openpyxl.load_workbook(summary_file, keep_links=True)
@@ -295,7 +294,7 @@ if st.button("Generate Final Report"):
                         try: d[pd_key] = int(float(str(d[pd_key])))
                         except: pass
                     
-                    d["IS_NEW_RECORD"] = False # Tag old records to prevent logic alteration
+                    d["IS_NEW_RECORD"] = False
                     existing_data.append(d)
         else:
             wb = openpyxl.Workbook()
@@ -424,24 +423,20 @@ if st.button("Generate Final Report"):
                     if has_invalid_sequence and has_correct_sequence:
                         cat_val = "Cancelled"
                         status = "Closed"
-                    elif has_invalid_sequence and not has_correct_sequence:
-                        cat_val = ""
-                        status = "Open"
-                    elif has_cancelled_keyword:
-                        cat_val = "Cancelled"
-                        status = "Closed"
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
-            # INTERCEPT AND PROCESS ONLY FOR NEW DATA TO PRESERVE HISTORICAL RECORDS
-            if is_new:
-                dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
-                dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
-                
-                if dlr_k and row_data.get(dlr_k):
-                    dlr_val_raw = str(row_data[dlr_k]).strip()
-                    if "|" in dlr_val_raw:
-                        parts = [p.strip() for p in dlr_val_raw.split('|')]
+            # DYNAMIC CORRECTION LAYER FOR UNPARSED / BLANK D NAME IN RECENT RUN ARTIFACTS
+            dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
+            dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
+            
+            if dlr_k and row_data.get(dlr_k):
+                dlr_val_raw = str(row_data[dlr_k]).strip()
+                if "|" in dlr_val_raw:
+                    parts = [p.strip() for p in dlr_val_raw.split('|')]
+                    # If this is a newly generated record OR an unparsed blank D Name record from previous file, fix it
+                    current_dname_val = row_data.get(dname_k) if dname_k else None
+                    if is_new or current_dname_val is None or str(current_dname_val).strip() == "" or str(current_dname_val).lower() == 'nan':
                         row_data[dlr_k] = parts[2] if len(parts) >= 3 else parts[-1] # Dealer Name = TEXTAFTER second "|"
                         if dname_k:
                             row_data[dname_k] = to_numeric(parts[0]) # D Name (Code) = TEXTBEFORE first "|"
@@ -504,7 +499,7 @@ if st.button("Generate Final Report"):
             ws[f"{inv_let}{r}"].number_format = '@'
 
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2="CANCELLED")'], fill=blue_fill))
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
         
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
         ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
