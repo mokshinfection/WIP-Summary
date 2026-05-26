@@ -9,10 +9,9 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v51", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v52", layout="wide")
 
 def extract_area_from_filename(filename):
-    """Extracts area name from filename and handles custom mappings."""
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
     area = "Unknown"
     if match: 
@@ -26,7 +25,6 @@ def extract_area_from_filename(filename):
     return area
 
 def to_numeric(val):
-    """Converts a value to int or float if possible to prevent 'Number as Text' Excel errors."""
     if val is None: return ""
     if isinstance(val, (int, float)): return val
     s = str(val).strip().replace(',', '')
@@ -41,7 +39,6 @@ def to_numeric(val):
             return str(val).strip()
 
 def clean_date_string(val):
-    """Cleans hidden tab characters, newlines, and trailing spaces from dates to prevent formatting corruption."""
     if val is None or pd.isna(val): return None
     if isinstance(val, (datetime, date)):
         if hasattr(val, 'date'): return val.date()
@@ -54,7 +51,6 @@ def clean_date_string(val):
         return s
 
 def parse_excel_wip(file_obj, filename):
-    """Parses source lists using the scanning parser logic."""
     try:
         df_raw = pd.read_excel(file_obj, header=None)
     except Exception as e:
@@ -84,13 +80,16 @@ def parse_excel_wip(file_obj, filename):
     
     while i < len(df_raw):
         row = df_raw.iloc[i]
+        
+        # Robust Dealer Extraction handling cell shifts
         if str(row[0]).strip() == 'Dealer':
-            d_val = df_raw.iloc[i, 6]
-            curr_dname = str(d_val).split('.')[0] if not pd.isna(d_val) else "Unknown"
-            
-            dlr_val = df_raw.iloc[i, 7]
-            curr_dealer = str(dlr_val).strip() if not pd.isna(dlr_val) else "Unknown"
-            
+            row_list_clean = [str(x).strip() for x in row.values if pd.notna(x) and str(x).strip() not in ['', 'nan']]
+            if len(row_list_clean) >= 3:
+                curr_dname = row_list_clean[1].split('.')[0].strip()
+                curr_dealer = row_list_clean[2]
+            elif len(row_list_clean) == 2:
+                curr_dname = row_list_clean[1].split('.')[0].strip()
+                curr_dealer = row_list_clean[1]
             i += 1
             continue
             
@@ -237,7 +236,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v51")
+st.title("📊 WIP Summary Consolidator Pro v52")
 
 with st.sidebar:
     st.header("Files")
@@ -254,7 +253,6 @@ if st.button("Generate Final Report"):
         target_name = "Master Data"
         
         std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status']
-        numeric_cols = ['SNO.', 'Total', 'PartsTotal', 'Ord.No.', 'Cust.No', 'Dname']
 
         if summary_file:
             wb = openpyxl.load_workbook(summary_file, keep_links=True)
@@ -267,15 +265,27 @@ if st.button("Generate Final Report"):
                 col_map_ws = {name: i for i, name in enumerate(header_ws)}
                 
                 for row in data_rows[1:]:
+                    # Skip completely empty trailing rows to prevent gaps
+                    if all(val is None or str(val).strip() == '' for val in row):
+                        continue
+                        
                     d = {header_ws[i]: val for i, val in enumerate(row)}
+                    
+                    # Verify Order ID exists (prevents phantom blank rows)
+                    ord_key = next((k for k in d.keys() if str(k).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
+                    if not ord_key or not d.get(ord_key) or str(d[ord_key]).strip().lower() in ['nan', 'none', '']:
+                        continue
+
                     if d.get('Area') == "A.P": d['Area'] = "Nellore"
                     if d.get('Area') == "Hyderabad": d['Area'] = "HYD"
                     
                     for k in ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']:
                         if d.get(k): d[k] = clean_date_string(d[k])
 
-                    if 'Pending Days' in d and d['Pending Days'] is not None:
-                        try: d['Pending Days'] = int(float(str(d['Pending Days'])))
+                    # Standardize Pending Days
+                    pd_key = next((k for k in d.keys() if str(k).strip().upper() in ["PENDING DAYS", "PENDING"]), None)
+                    if pd_key and d[pd_key] is not None:
+                        try: d[pd_key] = int(float(str(d[pd_key])))
                         except: pass
                     existing_data.append(d)
         else:
@@ -296,16 +306,27 @@ if st.button("Generate Final Report"):
             for f in open_order_files:
                 new_data_raw.extend(parse_excel_wip(f, f.name))
         
-        existing_ids = {str(r.get('Ord.No.', '')) for r in existing_data if r.get('Ord.No.')}
-        unique_new = [n for n in new_data_raw if str(n['Ord.No.']) not in existing_ids]
+        # Standardize Order IDs extraction for de-duplication
+        def get_ord(r):
+            k = next((key for key in r.keys() if str(key).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
+            return str(r.get(k, '')).strip() if k else ''
+
+        existing_ids = {get_ord(r) for r in existing_data if get_ord(r)}
+        unique_new = [n for n in new_data_raw if get_ord(n) not in existing_ids]
         
         full_data = existing_data + unique_new
-        full_data = [r for r in full_data if not str(r.get('Chassis/SL No.', '')).startswith('B')]
+        
+        def get_chassis(r):
+            k = next((key for key in r.keys() if str(key).strip().upper() in ["CHASSIS/SL NO.", "CHASSIS NO"]), None)
+            return str(r.get(k, '')).strip() if k else ''
+            
+        full_data = [r for r in full_data if not get_chassis(r).startswith('B')]
         
         cr_dates = []
         for r in full_data:
-            if r.get('Cr.Dt') and isinstance(r['Cr.Dt'], date):
-                cr_dates.append(pd.to_datetime(r['Cr.Dt']))
+            k_cr = next((key for key in r.keys() if str(key).strip().upper() in ["CR.DT", "CR DT"]), None)
+            if k_cr and r.get(k_cr) and isinstance(r[k_cr], date):
+                cr_dates.append(pd.to_datetime(r[k_cr]))
         latest_dt = max(cr_dates) if cr_dates else datetime.now()
         dt_str = latest_dt.strftime("%d/%m/%Y")
         dt_sheet = latest_dt.strftime("%d.%m.%y")
@@ -318,14 +339,21 @@ if st.button("Generate Final Report"):
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
 
         for r_idx, row_data in enumerate(full_data, start=2):
-            ord_no = str(row_data.get('Ord.No.', '')).split('.')[0].strip()
-            creation_date = clean_date_string(row_data.get('Cr.Dt'))
             
-            inv_no_raw = row_data.get('Invoice no.', '')
-            existing_date_val = row_data.get('Date', '')
+            # Smart Key Lookups
+            ord_key = next((k for k in row_data.keys() if str(k).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
+            cr_key = next((k for k in row_data.keys() if str(k).strip().upper() in ["CR.DT", "CR DT"]), None)
+            inv_key = next((k for k in row_data.keys() if str(k).strip().upper() in ["INVOICE NO.", "INVOICE NO", "INVOICE"]), None)
+            dt_key = next((k for k in row_data.keys() if str(k).strip().upper() == "DATE"), None)
+            cat_key = next((k for k in row_data.keys() if str(k).strip().upper() == "CATEGORY"), None)
+
+            ord_no = str(row_data.get(ord_key, '')).split('.')[0].strip() if ord_key else ""
+            creation_date = clean_date_string(row_data.get(cr_key)) if cr_key else None
+            
+            inv_no_raw = row_data.get(inv_key, '') if inv_key else ''
+            existing_date_val = row_data.get(dt_key, '') if dt_key else ''
             inv_list = []
             final_date_val = clean_date_string(existing_date_val)
             has_cancelled_keyword = False
@@ -377,7 +405,7 @@ if st.button("Generate Final Report"):
                 cat_val = "JOB CARD CLOSED"
                 status = "Closed"
             else:
-                orig_cat = str(row_data.get('Category', '') or '').strip()
+                orig_cat = str(row_data.get(cat_key, '') or '').strip() if cat_key else ""
                 if orig_cat.upper() in ["CANCELLED", "CANCEL"]:
                     cat_val = "Cancelled"
                     status = "Closed"
@@ -396,30 +424,49 @@ if st.button("Generate Final Report"):
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
+            # Write values using dynamic matching
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
-                val = row_data.get(name, "")
+                name_upper = str(name).strip().upper()
                 
-                if name == "SNO.": 
+                # Intelligent dynamic matching for structural shifts
+                if name_upper in ["SNO.", "S.NO.", "S NO", "S.NO"]:
                     cell.value = r_idx - 1
-                elif name == "Category": cell.value = cat_val
-                elif name == "Status": cell.value = status
-                elif str(name).lower() == "invoice no.": 
+                elif name_upper in ["CATEGORY", "CATEGORY "]:
+                    cell.value = cat_val
+                elif name_upper == "STATUS":
+                    cell.value = status
+                elif name_upper in ["INVOICE NO.", "INVOICE NO"]:
                     cell.number_format = '@'
                     cell.value = str(final_inv_no).strip() if final_inv_no else ""
-                elif name == "Date":
+                elif name_upper == "DATE":
                     cell.value = final_date_val
-                elif name == "Pending Days":
-                    try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" else ""
-                    except: cell.value = val
-                elif name == "Remarks": cell.value = apply_rich_remarks(str(val or ''))
-                else: 
-                    if name in numeric_cols:
+                elif name_upper == "REMARKS":
+                    rem_k = next((k for k in row_data.keys() if str(k).strip().upper() == "REMARKS"), None)
+                    raw_rem = row_data.get(rem_k, "") if rem_k else ""
+                    cell.value = apply_rich_remarks(str(raw_rem))
+                else:
+                    # Smart Value Mapping
+                    val = row_data.get(name)
+                    if val is None or val == "":
+                        if name_upper in ["D NAME", "DNAME", "DEALER NAME"]:
+                            dk = next((k for k in row_data.keys() if str(k).strip().upper() in ["DNAME", "D NAME"]), None)
+                            val = row_data.get(dk, "") if dk else ""
+                        elif name_upper in ["D.CODE &JC NO.", "D.CODE & JC NO."]:
+                            dk = next((k for k in row_data.keys() if str(k).strip().upper() in ["D.CODE &JC NO.", "D.CODE & JC NO."]), None)
+                            val = row_data.get(dk, "") if dk else ""
+                        elif name_upper in ["PENDING DAYS", "PENDING"]:
+                            dk = next((k for k in row_data.keys() if str(k).strip().upper() in ["PENDING DAYS", "PENDING"]), None)
+                            val = row_data.get(dk, "") if dk else ""
+                            try: val = int(float(str(val))) if val is not None and str(val).strip() != "" else ""
+                            except: pass
+
+                    if name_upper in ["TOTAL", "PARTSTOTAL", "PARTS TOTAL", "ORD.NO.", "ORD NO", "CUST.NO", "CUST NO", "D NAME", "DNAME"]:
                         cell.value = to_numeric(val)
                     else:
                         cell.value = val
-                
-                if name in date_cols and cell.value: 
+                        
+                if name_upper in ["REQ. DELV. DT", "REQ DELV DT", "CR.DT", "CR DT", "CLOSING DATE", "DATE"] and cell.value:
                     cell.number_format = 'mm-dd-yy'
 
         if summary_file:
@@ -435,10 +482,12 @@ if st.button("Generate Final Report"):
             ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(std_headers))}{len(full_data) + 1}"
 
         last_row = len(full_data) + 1
-        cat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Category', 19) + 1)
-        stat_let = openpyxl.utils.get_column_letter(col_map_ws.get('Status', 22) + 1)
-        inv_let = openpyxl.utils.get_column_letter(col_map_ws.get('Invoice no.', 20) + 1)
         
+        # Apply conditional formatting robustly
+        cat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper() == "CATEGORY"), 'T')
+        stat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper() == "STATUS"), 'W')
+        inv_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper() in ["INVOICE NO.", "INVOICE NO"]), 'U')
+
         for r in range(2, last_row + 5):
             ws[f"{inv_let}{r}"].number_format = '@'
 
