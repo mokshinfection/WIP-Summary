@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v53", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v54", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -83,11 +83,12 @@ def parse_excel_wip(file_obj, filename):
         if str(row[0]).strip() == 'Dealer':
             row_list_clean = [str(x).strip() for x in row.values if pd.notna(x) and str(x).strip() not in ['', 'nan']]
             if len(row_list_clean) >= 3:
-                curr_dname = row_list_clean[1].split('.')[0].strip()
                 curr_dealer = row_list_clean[2]
+                # Extract Dname directly from the text before "|" of Dealer Name if available
+                curr_dname = curr_dealer.split('|')[0].strip() if '|' in curr_dealer else row_list_clean[1].split('.')[0].strip()
             elif len(row_list_clean) == 2:
-                curr_dname = row_list_clean[1].split('.')[0].strip()
                 curr_dealer = row_list_clean[1]
+                curr_dname = curr_dealer.split('|')[0].strip() if '|' in curr_dealer else row_list_clean[1].split('.')[0].strip()
             i += 1
             continue
             
@@ -333,6 +334,8 @@ if st.button("Generate Final Report"):
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
+        numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
 
         for r_idx, row_data in enumerate(full_data, start=2):
             
@@ -417,13 +420,11 @@ if st.button("Generate Final Report"):
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
-            # Failsafe Value Writing Engine
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
                 
                 name_clean = str(name).strip().upper().replace(" ", "").replace(".", "")
                 
-                # Retrieve the raw baseline value, handling cross-format header keys
                 val = row_data.get(name)
                 if val is None or str(val).strip() == "" or pd.isna(val) or str(val).strip().lower() == 'nan':
                     for k, v in row_data.items():
@@ -431,7 +432,6 @@ if st.button("Generate Final Report"):
                             val = v
                             break
                             
-                # Apply structural overrides based on clean names
                 if name_clean in ["SNO", "SLNO"]:
                     cell.value = r_idx - 1
                 elif name_clean == "CATEGORY":
@@ -448,13 +448,21 @@ if st.button("Generate Final Report"):
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
                     try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" and str(val).lower() != 'nan' else ""
                     except: cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
+                elif name_clean in ["DNAME", "DEALERCODE", "DEALERNAME"]:
+                    # CRITICAL FIX: Extract D Name strictly using TEXTBEFORE("|", Dealer Name)
+                    dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
+                    dlr_v = str(row_data.get(dlr_k, '')).strip() if dlr_k else ""
+                    
+                    if "|" in dlr_v:
+                        cell.value = to_numeric(dlr_v.split('|')[0].strip())
+                    else:
+                        cell.value = to_numeric(val) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 else:
-                    if name_clean in ["TOTAL", "PARTSTOTAL", "ORDNO", "CUSTNO", "DNAME", "DEALERNAME", "DCODE&JCNO"]:
+                    if name_clean in numeric_cols:
                         cell.value = to_numeric(val)
                     else:
                         cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
                         
-                # Date format enforcer
                 if name_clean in ["REQDELVDT", "CRDT", "CLOSINGDATE", "DATE"] and cell.value:
                     cell.number_format = 'mm-dd-yy'
 
