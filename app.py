@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v54", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v56", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -82,13 +82,22 @@ def parse_excel_wip(file_obj, filename):
         row = df_raw.iloc[i]
         if str(row[0]).strip() == 'Dealer':
             row_list_clean = [str(x).strip() for x in row.values if pd.notna(x) and str(x).strip() not in ['', 'nan']]
+            
+            raw_dealer_str = ""
             if len(row_list_clean) >= 3:
-                curr_dealer = row_list_clean[2]
-                # Extract Dname directly from the text before "|" of Dealer Name if available
-                curr_dname = curr_dealer.split('|')[0].strip() if '|' in curr_dealer else row_list_clean[1].split('.')[0].strip()
+                raw_dealer_str = row_list_clean[2]
             elif len(row_list_clean) == 2:
-                curr_dealer = row_list_clean[1]
-                curr_dname = curr_dealer.split('|')[0].strip() if '|' in curr_dealer else row_list_clean[1].split('.')[0].strip()
+                raw_dealer_str = row_list_clean[1]
+                
+            # NEW DATA EXTRACTOR RULES: TEXTBEFORE and TEXTAFTER parsing logic applied strictly to incoming streams
+            if '|' in raw_dealer_str:
+                parts = [p.strip() for p in raw_dealer_str.split('|')]
+                curr_dname = parts[0]
+                curr_dealer = parts[2] if len(parts) >= 3 else parts[-1]
+            else:
+                curr_dname = raw_dealer_str.split('.')[0].strip() if len(row_list_clean) == 2 else (row_list_clean[1].split('.')[0].strip() if len(row_list_clean) > 1 else "")
+                curr_dealer = raw_dealer_str
+                
             i += 1
             continue
             
@@ -131,7 +140,8 @@ def parse_excel_wip(file_obj, filename):
                     "Category": "",
                     "Invoice no.": "",
                     "Date": "",
-                    "Status": "Open"
+                    "Status": "Open",
+                    "IS_NEW_RECORD": True # Flag tag to protect historical data integrity from overrides
                 }
                 
                 if i + 1 < len(df_raw):
@@ -235,7 +245,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v54")
+st.title("📊 WIP Summary Consolidator Pro v56")
 
 with st.sidebar:
     st.header("Files")
@@ -252,6 +262,7 @@ if st.button("Generate Final Report"):
         target_name = "Master Data"
         
         std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status']
+        numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
 
         if summary_file:
             wb = openpyxl.load_workbook(summary_file, keep_links=True)
@@ -283,6 +294,8 @@ if st.button("Generate Final Report"):
                     if pd_key and d[pd_key] is not None:
                         try: d[pd_key] = int(float(str(d[pd_key])))
                         except: pass
+                    
+                    d["IS_NEW_RECORD"] = False # Tag old records to prevent logic alteration
                     existing_data.append(d)
         else:
             wb = openpyxl.Workbook()
@@ -335,9 +348,9 @@ if st.button("Generate Final Report"):
         blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
         date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
-        numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
 
         for r_idx, row_data in enumerate(full_data, start=2):
+            is_new = row_data.get("IS_NEW_RECORD", False)
             
             ord_key = next((k for k in row_data.keys() if str(k).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
             cr_key = next((k for k in row_data.keys() if str(k).strip().upper() in ["CR.DT", "CR DT"]), None)
@@ -420,6 +433,19 @@ if st.button("Generate Final Report"):
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
+            # INTERCEPT AND PROCESS ONLY FOR NEW DATA TO PRESERVE HISTORICAL RECORDS
+            if is_new:
+                dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
+                dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
+                
+                if dlr_k and row_data.get(dlr_k):
+                    dlr_val_raw = str(row_data[dlr_k]).strip()
+                    if "|" in dlr_val_raw:
+                        parts = [p.strip() for p in dlr_val_raw.split('|')]
+                        row_data[dlr_k] = parts[2] if len(parts) >= 3 else parts[-1] # Dealer Name = TEXTAFTER second "|"
+                        if dname_k:
+                            row_data[dname_k] = to_numeric(parts[0]) # D Name (Code) = TEXTBEFORE first "|"
+
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
                 
@@ -448,15 +474,6 @@ if st.button("Generate Final Report"):
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
                     try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" and str(val).lower() != 'nan' else ""
                     except: cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
-                elif name_clean in ["DNAME", "DEALERCODE", "DEALERNAME"]:
-                    # CRITICAL FIX: Extract D Name strictly using TEXTBEFORE("|", Dealer Name)
-                    dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
-                    dlr_v = str(row_data.get(dlr_k, '')).strip() if dlr_k else ""
-                    
-                    if "|" in dlr_v:
-                        cell.value = to_numeric(dlr_v.split('|')[0].strip())
-                    else:
-                        cell.value = to_numeric(val) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 else:
                     if name_clean in numeric_cols:
                         cell.value = to_numeric(val)
@@ -487,7 +504,7 @@ if st.button("Generate Final Report"):
             ws[f"{inv_let}{r}"].number_format = '@'
 
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2="CANCELLED")'], fill=blue_fill))
         
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
         ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
@@ -495,9 +512,7 @@ if st.button("Generate Final Report"):
 
         output = io.BytesIO()
         wb.save(output)
-        
-        if summary_file: st.success(f"Workbook updated based on Cr.Dt: {dt_str}")
-        else: st.success(f"New Master Data generated from scratch for Date: {dt_str}")
+        st.success(f"Workbook updated successfully for Date: {dt_str}")
         
         download_name = f"South_Region_WIP_Summary_{dt_file}.xlsx"
         st.download_button("📥 Download Final Report", output.getvalue(), file_name=download_name)
