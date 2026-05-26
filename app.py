@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v58", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v59", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v58")
+st.title("📊 WIP Summary Consolidator Pro v59")
 
 with st.sidebar:
     st.header("Files")
@@ -271,6 +271,7 @@ if st.button("Generate Final Report"):
             data_rows = list(ws.iter_rows(values_only=True))
             if data_rows:
                 header_ws = data_rows[0]
+                col_map_ws = {name: i for i, name in enumerate(header_ws)}
                 
                 for row in data_rows[1:]:
                     if all(val is None or str(val).strip() == '' for val in row):
@@ -288,6 +289,7 @@ if st.button("Generate Final Report"):
                     for k in ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']:
                         if d.get(k): d[k] = clean_date_string(d[k])
 
+                    d["IS_NEW_RECORD"] = False
                     existing_data.append(d)
         else:
             wb = openpyxl.Workbook()
@@ -341,11 +343,12 @@ if st.button("Generate Final Report"):
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
         date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
 
-        # Get original template columns map
         if summary_file:
             col_map_ws = {name: i for i, name in enumerate(header_ws)}
         else:
             col_map_ws = {name: i for i, name in enumerate(std_headers)}
+
+        today_dt = date.today()
 
         for r_idx, row_data in enumerate(full_data, start=2):
             is_new = row_data.get("IS_NEW_RECORD", False)
@@ -425,24 +428,45 @@ if st.button("Generate Final Report"):
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
-            # Process Pipe-Splitting logic ONLY on brand new records or unparsed blank cells
-            if is_new:
-                dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
-                dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
-                
-                if dlr_k and row_data.get(dlr_k):
-                    dlr_val_raw = str(row_data[dlr_k]).strip()
-                    if "|" in dlr_val_raw:
-                        parts = [p.strip() for p in dlr_val_raw.split('|')]
+            # D Name and Dealer Name Explicit Pipe Override Logic
+            dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
+            dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
+            
+            if dlr_k and row_data.get(dlr_k):
+                dlr_val_raw = str(row_data[dlr_k]).strip()
+                if "|" in dlr_val_raw:
+                    parts = [p.strip() for p in dlr_val_raw.split('|')]
+                    current_dname_val = row_data.get(dname_k) if dname_k else None
+                    if is_new or current_dname_val is None or str(current_dname_val).strip() == "" or str(current_dname_val).lower() == 'nan':
                         row_data[dlr_k] = parts[2] if len(parts) >= 3 else parts[-1]
                         if dname_k:
                             row_data[dname_k] = to_numeric(parts[0])
+
+            # Recalculate dynamic pending days for the entire file
+            calc_pending = ""
+            if creation_date and isinstance(creation_date, date):
+                calc_pending = int((today_dt - creation_date).days)
+            else:
+                pd_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["PENDINGDAYS", "PENDING"]), None)
+                if pd_k and row_data.get(pd_k) is not None:
+                    try: calc_pending = int(float(str(row_data[pd_k])))
+                    except: calc_pending = row_data[pd_k]
+
+            # Recalculate D.Code & JC NO for the entire file (= CONCAT(D Name, Ord.No.))
+            extracted_dname = ""
+            if dname_k and row_data.get(dname_k) is not None and str(row_data.get(dname_k)).strip().lower() != 'nan':
+                extracted_dname = str(row_data.get(dname_k)).strip().split('.')[0]
+            if not extracted_dname:
+                dk_alt = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
+                if dk_alt and row_data.get(dk_alt) is not None:
+                    extracted_dname = str(row_data.get(dk_alt)).strip().split('.')[0]
+            
+            final_jc_no = f"{extracted_dname}{ord_no}" if extracted_dname and ord_no else ""
 
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
                 name_clean = str(name).strip().upper().replace(" ", "").replace(".", "")
                 
-                # Retrieve value
                 val = row_data.get(name)
                 if val is None or str(val).strip() == "" or pd.isna(val) or str(val).strip().lower() == 'nan':
                     for k, v in row_data.items():
@@ -464,18 +488,11 @@ if st.button("Generate Final Report"):
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    # MANDATE: Protect historical pending days completely
-                    if not is_new:
-                        cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
-                    else:
-                        try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" and str(val).lower() != 'nan' else ""
-                        except: cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
+                    # MANDATE: Overwrite with recalculated entire pending days
+                    cell.value = to_numeric(calc_pending) if calc_pending != "" else ""
                 elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
-                    # MANDATE: Protect historical J-Code fields completely
-                    if not is_new:
-                        cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
-                    else:
-                        cell.value = to_numeric(val)
+                    # MANDATE: Overwrite with recalculated CONCAT(D Name, Ord.no.)
+                    cell.value = to_numeric(final_jc_no) if final_jc_no.isdigit() else final_jc_no
                 else:
                     if name_clean in numeric_cols:
                         cell.value = to_numeric(val)
