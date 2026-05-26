@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v57", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v58", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v57")
+st.title("📊 WIP Summary Consolidator Pro v58")
 
 with st.sidebar:
     st.header("Files")
@@ -261,7 +261,7 @@ if st.button("Generate Final Report"):
         target_name = "Master Data"
         
         std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status']
-        numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO', 'DNAME']
+        numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
 
         if summary_file:
             wb = openpyxl.load_workbook(summary_file, keep_links=True)
@@ -271,7 +271,6 @@ if st.button("Generate Final Report"):
             data_rows = list(ws.iter_rows(values_only=True))
             if data_rows:
                 header_ws = data_rows[0]
-                col_map_ws = {name: i for i, name in enumerate(header_ws)}
                 
                 for row in data_rows[1:]:
                     if all(val is None or str(val).strip() == '' for val in row):
@@ -289,12 +288,6 @@ if st.button("Generate Final Report"):
                     for k in ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']:
                         if d.get(k): d[k] = clean_date_string(d[k])
 
-                    pd_key = next((k for k in d.keys() if str(k).strip().upper() in ["PENDING DAYS", "PENDING"]), None)
-                    if pd_key and d[pd_key] is not None:
-                        try: d[pd_key] = int(float(str(d[pd_key])))
-                        except: pass
-                    
-                    d["IS_NEW_RECORD"] = False
                     existing_data.append(d)
         else:
             wb = openpyxl.Workbook()
@@ -347,6 +340,12 @@ if st.button("Generate Final Report"):
         blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
         date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
+
+        # Get original template columns map
+        if summary_file:
+            col_map_ws = {name: i for i, name in enumerate(header_ws)}
+        else:
+            col_map_ws = {name: i for i, name in enumerate(std_headers)}
 
         for r_idx, row_data in enumerate(full_data, start=2):
             is_new = row_data.get("IS_NEW_RECORD", False)
@@ -426,26 +425,24 @@ if st.button("Generate Final Report"):
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
-            # DYNAMIC CORRECTION LAYER FOR UNPARSED / BLANK D NAME IN RECENT RUN ARTIFACTS
-            dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
-            dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
-            
-            if dlr_k and row_data.get(dlr_k):
-                dlr_val_raw = str(row_data[dlr_k]).strip()
-                if "|" in dlr_val_raw:
-                    parts = [p.strip() for p in dlr_val_raw.split('|')]
-                    # If this is a newly generated record OR an unparsed blank D Name record from previous file, fix it
-                    current_dname_val = row_data.get(dname_k) if dname_k else None
-                    if is_new or current_dname_val is None or str(current_dname_val).strip() == "" or str(current_dname_val).lower() == 'nan':
-                        row_data[dlr_k] = parts[2] if len(parts) >= 3 else parts[-1] # Dealer Name = TEXTAFTER second "|"
+            # Process Pipe-Splitting logic ONLY on brand new records or unparsed blank cells
+            if is_new:
+                dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
+                dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
+                
+                if dlr_k and row_data.get(dlr_k):
+                    dlr_val_raw = str(row_data[dlr_k]).strip()
+                    if "|" in dlr_val_raw:
+                        parts = [p.strip() for p in dlr_val_raw.split('|')]
+                        row_data[dlr_k] = parts[2] if len(parts) >= 3 else parts[-1]
                         if dname_k:
-                            row_data[dname_k] = to_numeric(parts[0]) # D Name (Code) = TEXTBEFORE first "|"
+                            row_data[dname_k] = to_numeric(parts[0])
 
             for name, c_idx in col_map_ws.items():
                 cell = ws.cell(row=r_idx, column=c_idx + 1)
-                
                 name_clean = str(name).strip().upper().replace(" ", "").replace(".", "")
                 
+                # Retrieve value
                 val = row_data.get(name)
                 if val is None or str(val).strip() == "" or pd.isna(val) or str(val).strip().lower() == 'nan':
                     for k, v in row_data.items():
@@ -467,8 +464,18 @@ if st.button("Generate Final Report"):
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" and str(val).lower() != 'nan' else ""
-                    except: cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
+                    # MANDATE: Protect historical pending days completely
+                    if not is_new:
+                        cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
+                    else:
+                        try: cell.value = int(float(str(val))) if val is not None and str(val).strip() != "" and str(val).lower() != 'nan' else ""
+                        except: cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
+                elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
+                    # MANDATE: Protect historical J-Code fields completely
+                    if not is_new:
+                        cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
+                    else:
+                        cell.value = to_numeric(val)
                 else:
                     if name_clean in numeric_cols:
                         cell.value = to_numeric(val)
