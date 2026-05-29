@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v66", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v61", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v66")
+st.title("📊 WIP Summary Consolidator Pro v61")
 
 with st.sidebar:
     st.header("Files")
@@ -358,7 +358,6 @@ if st.button("Generate Final Report"):
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
 
         if summary_file:
             col_map_ws = {name: i for i, name in enumerate(header_ws)}
@@ -367,9 +366,6 @@ if st.button("Generate Final Report"):
 
         cr_k = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["CRDT"]), None)
         cr_let = openpyxl.utils.get_column_letter(col_map_ws[cr_k] + 1) if cr_k else "H"
-        
-        pd_k = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["PENDINGDAYS", "PENDING"]), None)
-        pd_let = openpyxl.utils.get_column_letter(col_map_ws[pd_k] + 1) if pd_k else "B"
 
         today_dt = date.today()
 
@@ -463,6 +459,15 @@ if st.button("Generate Final Report"):
                         if dname_k:
                             row_data[dname_k] = to_numeric(parts[0])
 
+            calc_pending = ""
+            if creation_date and isinstance(creation_date, date):
+                calc_pending = int((today_dt - creation_date).days)
+            else:
+                pd_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["PENDINGDAYS", "PENDING"]), None)
+                if pd_k and row_data.get(pd_k) is not None:
+                    try: calc_pending = int(float(str(row_data[pd_k])))
+                    except: calc_pending = row_data[pd_k]
+
             extracted_dname = ""
             if dname_k and row_data.get(dname_k) is not None and str(row_data.get(dname_k)).strip().lower() != 'nan':
                 extracted_dname = str(row_data.get(dname_k)).strip().split('.')[0]
@@ -491,16 +496,27 @@ if st.button("Generate Final Report"):
                 elif name_clean == "STATUS":
                     cell.value = status
                 elif name_clean in ["INVOICENO", "INVNO"]:
-                    cell.value = to_numeric(final_inv_no) if str(final_inv_no).isdigit() else final_inv_no
+                    cell.number_format = '@'
+                    cell.value = str(final_inv_no).strip() if final_inv_no else ""
                 elif name_clean == "DATE":
                     cell.value = final_date_val
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    # CRITICAL FIXED DIRECT ROW COORDINATES SYNTAX: Injects exactly the cell formula string to prevent Excel 365 Implicit Intersection Operator formatting errors
-                    cell.value = f"=DAYS(TODAY(),{cr_let}{r_idx})"
+                    # CRITICAL FIX: To prevent unreadable blank gaps in Excel due to macro formula computation delays, 
+                    # inject the integer number calculated natively in python directly into the cell instead of a string formula.
+                    cell.value = to_numeric(calc_pending) if calc_pending != "" else ""
                 elif name_clean == "AGEBAND":
-                    cell.value = f'=IF({pd_let}{r_idx}="","",IF({pd_let}{r_idx}<=3,"0-3",IF({pd_let}{r_idx}<=7,"4-7",IF({pd_let}{r_idx}<=15,"7-15",">15"))))'
+                    ab_val = ""
+                    if calc_pending != "":
+                        try:
+                            d_val = int(float(str(calc_pending)))
+                            if d_val <= 3: ab_val = "0-3"
+                            elif d_val <= 7: ab_val = "4-7"
+                            elif d_val <= 15: ab_val = "7-15"
+                            else: ab_val = ">15"
+                        except: pass
+                    cell.value = ab_val
                 elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
                     cell.value = to_numeric(final_jc_no) if final_jc_no.isdigit() else final_jc_no
                 else:
@@ -527,7 +543,11 @@ if st.button("Generate Final Report"):
         last_row = len(full_data) + 1
         cat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "CATEGORY"), 'T')
         stat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "STATUS"), 'W')
+        inv_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["INVOICENO", "INVNO"]), 'U')
         
+        for r in range(2, last_row + 5):
+            ws[f"{inv_let}{r}"].number_format = '@'
+
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
         
