@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v63", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v64", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v63")
+st.title("📊 WIP Summary Consolidator Pro v64")
 
 with st.sidebar:
     st.header("Files")
@@ -499,14 +499,13 @@ if st.button("Generate Final Report"):
                 elif name_clean == "STATUS":
                     cell.value = status
                 elif name_clean in ["INVOICENO", "INVNO"]:
-                    cell.number_format = '@'
-                    cell.value = str(final_inv_no).strip() if final_inv_no else ""
+                    # CRITICAL FIX: Strip all explicit cell format strings ('@') to completely eliminate the prepended single quote character anomaly
+                    cell.value = to_numeric(final_inv_no) if str(final_inv_no).isdigit() else final_inv_no
                 elif name_clean == "DATE":
                     cell.value = final_date_val
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    # FIXED: Inject exactly the requested explicit Excel formula without the extra wrapper constraints
                     cell.value = f'=DAYS(TODAY(),{cr_let}{r_idx})'
                     cell.number_format = '0'
                 elif name_clean == "AGEBAND":
@@ -537,13 +536,9 @@ if st.button("Generate Final Report"):
         last_row = len(full_data) + 1
         cat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "CATEGORY"), 'T')
         stat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "STATUS"), 'W')
-        inv_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["INVOICENO", "INVNO"]), 'U')
         
-        for r in range(2, last_row + 5):
-            ws[f"{inv_let}{r}"].number_format = '@'
-
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2="CANCELLED")'], fill=blue_fill))
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
         
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
         ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
