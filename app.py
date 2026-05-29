@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v68", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v69", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v68")
+st.title("📊 WIP Summary Consolidator Pro v69")
 
 with st.sidebar:
     st.header("Files")
@@ -368,8 +368,8 @@ if st.button("Generate Final Report"):
         pd_k = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["PENDINGDAYS", "PENDING"]), None)
         pd_let = openpyxl.utils.get_column_letter(col_map_ws[pd_k] + 1) if pd_k else "B"
         
-        cat_wk = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "CATEGORY"), None)
-        cat_let_loc = openpyxl.utils.get_column_letter(col_map_ws[cat_wk] + 1) if cat_wk else "T"
+        stat_wk = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "STATUS"), None)
+        stat_let_loc = openpyxl.utils.get_column_letter(col_map_ws[stat_wk] + 1) if stat_wk else "W"
 
         today_dt = date.today()
 
@@ -506,11 +506,10 @@ if st.button("Generate Final Report"):
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    # AS REQUESTED: Reverted back to clean v61 native standalone python calculation integer
                     cell.value = to_numeric(calc_pending) if calc_pending != "" else ""
                 elif name_clean == "AGEBAND":
-                    # MANDATE ENGINE LAYER: Injects standard Excel formula ONLY into the Age Band column
-                    cell.value = f'=IF(OR({cat_let_loc}{r_idx}="JOB CARD CLOSED",LEFT(NCELL({cat_let_loc}{r_idx}),6)="CLOSED"),"Closed",IF({pd_let}{r_idx}="","",IF({pd_let}{r_idx}<=3,"0-3",IF({pd_let}{r_idx}<=7,"4-7",IF({pd_let}{r_idx}<=15,"7-15",">15")))))'.replace("NCELL", "")
+                    # EXCEL MACRO FORMULA ENGINE LAYER: Checking 'Status' column letter index natively for "Closed" values
+                    cell.value = f'=IF({stat_let_loc}{r_idx}="Closed","Closed",IF({pd_let}{r_idx}="","",IF({pd_let}{r_idx}<=3,"0-3",IF({pd_let}{r_idx}<=7,"4-7",IF({pd_let}{r_idx}<=15,"7-15",">15")))))'
                 elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
                     cell.value = to_numeric(final_jc_no) if final_jc_no.isdigit() else final_jc_no
                 else:
