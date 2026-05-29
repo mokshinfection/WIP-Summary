@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v61", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v62", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v61")
+st.title("📊 WIP Summary Consolidator Pro v62")
 
 with st.sidebar:
     st.header("Files")
@@ -366,6 +366,9 @@ if st.button("Generate Final Report"):
 
         cr_k = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["CRDT"]), None)
         cr_let = openpyxl.utils.get_column_letter(col_map_ws[cr_k] + 1) if cr_k else "H"
+        
+        pd_k = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["PENDINGDAYS", "PENDING"]), None)
+        pd_let = openpyxl.utils.get_column_letter(col_map_ws[pd_k] + 1) if pd_k else "B"
 
         today_dt = date.today()
 
@@ -459,15 +462,6 @@ if st.button("Generate Final Report"):
                         if dname_k:
                             row_data[dname_k] = to_numeric(parts[0])
 
-            calc_pending = ""
-            if creation_date and isinstance(creation_date, date):
-                calc_pending = int((today_dt - creation_date).days)
-            else:
-                pd_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["PENDINGDAYS", "PENDING"]), None)
-                if pd_k and row_data.get(pd_k) is not None:
-                    try: calc_pending = int(float(str(row_data[pd_k])))
-                    except: calc_pending = row_data[pd_k]
-
             extracted_dname = ""
             if dname_k and row_data.get(dname_k) is not None and str(row_data.get(dname_k)).strip().lower() != 'nan':
                 extracted_dname = str(row_data.get(dname_k)).strip().split('.')[0]
@@ -503,20 +497,12 @@ if st.button("Generate Final Report"):
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    # CRITICAL FIX: To prevent unreadable blank gaps in Excel due to macro formula computation delays, 
-                    # inject the integer number calculated natively in python directly into the cell instead of a string formula.
-                    cell.value = to_numeric(calc_pending) if calc_pending != "" else ""
+                    # Inject LIVE Excel Formula calculating offset dynamically on file open
+                    cell.value = f'=IF({cr_let}{r_idx}="","",DAYS(TODAY(),{cr_let}{r_idx}))'
+                    cell.number_format = '0'
                 elif name_clean == "AGEBAND":
-                    ab_val = ""
-                    if calc_pending != "":
-                        try:
-                            d_val = int(float(str(calc_pending)))
-                            if d_val <= 3: ab_val = "0-3"
-                            elif d_val <= 7: ab_val = "4-7"
-                            elif d_val <= 15: ab_val = "7-15"
-                            else: ab_val = ">15"
-                        except: pass
-                    cell.value = ab_val
+                    # Inject LIVE Nested IF Excel Formula mapping Age Bands
+                    cell.value = f'=IF({pd_let}{r_idx}="","",IF({pd_let}{r_idx}<=3,"0-3",IF({pd_let}{r_idx}<=7,"4-7",IF({pd_let}{r_idx}<=15,"7-15",">15"))))'
                 elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
                     cell.value = to_numeric(final_jc_no) if final_jc_no.isdigit() else final_jc_no
                 else:
