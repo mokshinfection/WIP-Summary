@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v62", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v63", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v62")
+st.title("📊 WIP Summary Consolidator Pro v63")
 
 with st.sidebar:
     st.header("Files")
@@ -462,6 +462,15 @@ if st.button("Generate Final Report"):
                         if dname_k:
                             row_data[dname_k] = to_numeric(parts[0])
 
+            calc_pending = ""
+            if creation_date and isinstance(creation_date, date):
+                calc_pending = int((today_dt - creation_date).days)
+            else:
+                pd_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["PENDINGDAYS", "PENDING"]), None)
+                if pd_k and row_data.get(pd_k) is not None:
+                    try: calc_pending = int(float(str(row_data[pd_k])))
+                    except: calc_pending = row_data[pd_k]
+
             extracted_dname = ""
             if dname_k and row_data.get(dname_k) is not None and str(row_data.get(dname_k)).strip().lower() != 'nan':
                 extracted_dname = str(row_data.get(dname_k)).strip().split('.')[0]
@@ -497,11 +506,10 @@ if st.button("Generate Final Report"):
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    # Inject LIVE Excel Formula calculating offset dynamically on file open
-                    cell.value = f'=IF({cr_let}{r_idx}="","",DAYS(TODAY(),{cr_let}{r_idx}))'
+                    # FIXED: Inject exactly the requested explicit Excel formula without the extra wrapper constraints
+                    cell.value = f'=DAYS(TODAY(),{cr_let}{r_idx})'
                     cell.number_format = '0'
                 elif name_clean == "AGEBAND":
-                    # Inject LIVE Nested IF Excel Formula mapping Age Bands
                     cell.value = f'=IF({pd_let}{r_idx}="","",IF({pd_let}{r_idx}<=3,"0-3",IF({pd_let}{r_idx}<=7,"4-7",IF({pd_let}{r_idx}<=15,"7-15",">15"))))'
                 elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
                     cell.value = to_numeric(final_jc_no) if final_jc_no.isdigit() else final_jc_no
@@ -535,7 +543,7 @@ if st.button("Generate Final Report"):
             ws[f"{inv_let}{r}"].number_format = '@'
 
         ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2="CANCELLED")'], fill=blue_fill))
         
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
         ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
