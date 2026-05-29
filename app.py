@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v60", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v61", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v60")
+st.title("📊 WIP Summary Consolidator Pro v61")
 
 with st.sidebar:
     st.header("Files")
@@ -272,7 +272,6 @@ if st.button("Generate Final Report"):
             if data_rows:
                 header_ws = list(data_rows[0])
                 
-                # Check for Age Band and add if missing
                 has_age_band = any(str(x).strip().upper().replace(" ", "") == "AGEBAND" for x in header_ws if x)
                 if not has_age_band:
                     header_ws.append("Age Band")
@@ -292,7 +291,6 @@ if st.button("Generate Final Report"):
                     if all(val is None or str(val).strip() == '' for val in row):
                         continue
                         
-                    # Zip standard mapped rows, padded with empty if new column was added
                     d = {}
                     for i, name in enumerate(header_ws):
                         if i < len(row): d[name] = row[i]
@@ -360,14 +358,12 @@ if st.button("Generate Final Report"):
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
 
         if summary_file:
             col_map_ws = {name: i for i, name in enumerate(header_ws)}
         else:
             col_map_ws = {name: i for i, name in enumerate(std_headers)}
 
-        # Identify the Cr.Dt column letter mapping dynamically for formulas
         cr_k = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["CRDT"]), None)
         cr_let = openpyxl.utils.get_column_letter(col_map_ws[cr_k] + 1) if cr_k else "H"
 
@@ -451,21 +447,18 @@ if st.button("Generate Final Report"):
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
-            # D Name and Dealer Name Explicit Pipe Override Logic
             dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
             dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
             
-            if dlr_k and row_data.get(dlr_k):
-                dlr_val_raw = str(row_data[dlr_k]).strip()
-                if "|" in dlr_val_raw:
-                    parts = [p.strip() for p in dlr_val_raw.split('|')]
-                    current_dname_val = row_data.get(dname_k) if dname_k else None
-                    if is_new or current_dname_val is None or str(current_dname_val).strip() == "" or str(current_dname_val).lower() == 'nan':
+            if is_new:
+                if dlr_k and row_data.get(dlr_k):
+                    dlr_val_raw = str(row_data[dlr_k]).strip()
+                    if "|" in dlr_val_raw:
+                        parts = [p.strip() for p in dlr_val_raw.split('|')]
                         row_data[dlr_k] = parts[2] if len(parts) >= 3 else parts[-1]
                         if dname_k:
                             row_data[dname_k] = to_numeric(parts[0])
 
-            # Pre-calc Pending Days solely to determine the Age Band logic
             calc_pending = ""
             if creation_date and isinstance(creation_date, date):
                 calc_pending = int((today_dt - creation_date).days)
@@ -475,7 +468,6 @@ if st.button("Generate Final Report"):
                     try: calc_pending = int(float(str(row_data[pd_k])))
                     except: calc_pending = row_data[pd_k]
 
-            # Recalculate D.Code & JC NO
             extracted_dname = ""
             if dname_k and row_data.get(dname_k) is not None and str(row_data.get(dname_k)).strip().lower() != 'nan':
                 extracted_dname = str(row_data.get(dname_k)).strip().split('.')[0]
@@ -511,11 +503,10 @@ if st.button("Generate Final Report"):
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    # Inject direct Excel Date computation formula
-                    pending_formula = f'=IF({cr_let}{r_idx}="","",DAYS(TODAY(),{cr_let}{r_idx}))'
-                    cell.value = pending_formula
+                    # CRITICAL FIX: To prevent unreadable blank gaps in Excel due to macro formula computation delays, 
+                    # inject the integer number calculated natively in python directly into the cell instead of a string formula.
+                    cell.value = to_numeric(calc_pending) if calc_pending != "" else ""
                 elif name_clean == "AGEBAND":
-                    # Determine the Age Band based on evaluated pending days logic
                     ab_val = ""
                     if calc_pending != "":
                         try:
