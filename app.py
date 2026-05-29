@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v59", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v60", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator ")
+st.title("📊 WIP Summary Consolidator Pro v60")
 
 with st.sidebar:
     st.header("Files")
@@ -260,7 +260,7 @@ if st.button("Generate Final Report"):
         wb = None
         target_name = "Master Data"
         
-        std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status']
+        std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status', 'Age Band']
         numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
 
         if summary_file:
@@ -270,14 +270,33 @@ if st.button("Generate Final Report"):
 
             data_rows = list(ws.iter_rows(values_only=True))
             if data_rows:
-                header_ws = data_rows[0]
+                header_ws = list(data_rows[0])
+                
+                # Check for Age Band and add if missing
+                has_age_band = any(str(x).strip().upper().replace(" ", "") == "AGEBAND" for x in header_ws if x)
+                if not has_age_band:
+                    header_ws.append("Age Band")
+                    new_col_idx = len(header_ws)
+                    c = ws.cell(row=1, column=new_col_idx, value="Age Band")
+                    try:
+                        prev_c = ws.cell(row=1, column=new_col_idx-1)
+                        if prev_c.has_style:
+                            c.font = Font(name=prev_c.font.name, b=prev_c.font.b, color=prev_c.font.color)
+                            c.fill = PatternFill(fill_type=prev_c.fill.fill_type, start_color=prev_c.fill.start_color, end_color=prev_c.fill.end_color)
+                    except:
+                        pass
+                
                 col_map_ws = {name: i for i, name in enumerate(header_ws)}
                 
                 for row in data_rows[1:]:
                     if all(val is None or str(val).strip() == '' for val in row):
                         continue
                         
-                    d = {header_ws[i]: val for i, val in enumerate(row)}
+                    # Zip standard mapped rows, padded with empty if new column was added
+                    d = {}
+                    for i, name in enumerate(header_ws):
+                        if i < len(row): d[name] = row[i]
+                        else: d[name] = ""
                     
                     ord_key = next((k for k in d.keys() if str(k).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
                     if not ord_key or not d.get(ord_key) or str(d[ord_key]).strip().lower() in ['nan', 'none', '']:
@@ -347,6 +366,10 @@ if st.button("Generate Final Report"):
             col_map_ws = {name: i for i, name in enumerate(header_ws)}
         else:
             col_map_ws = {name: i for i, name in enumerate(std_headers)}
+
+        # Identify the Cr.Dt column letter mapping dynamically for formulas
+        cr_k = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["CRDT"]), None)
+        cr_let = openpyxl.utils.get_column_letter(col_map_ws[cr_k] + 1) if cr_k else "H"
 
         today_dt = date.today()
 
@@ -442,7 +465,7 @@ if st.button("Generate Final Report"):
                         if dname_k:
                             row_data[dname_k] = to_numeric(parts[0])
 
-            # Recalculate dynamic pending days for the entire file
+            # Pre-calc Pending Days solely to determine the Age Band logic
             calc_pending = ""
             if creation_date and isinstance(creation_date, date):
                 calc_pending = int((today_dt - creation_date).days)
@@ -452,7 +475,7 @@ if st.button("Generate Final Report"):
                     try: calc_pending = int(float(str(row_data[pd_k])))
                     except: calc_pending = row_data[pd_k]
 
-            # Recalculate D.Code & JC NO for the entire file (= CONCAT(D Name, Ord.No.))
+            # Recalculate D.Code & JC NO
             extracted_dname = ""
             if dname_k and row_data.get(dname_k) is not None and str(row_data.get(dname_k)).strip().lower() != 'nan':
                 extracted_dname = str(row_data.get(dname_k)).strip().split('.')[0]
@@ -488,10 +511,22 @@ if st.button("Generate Final Report"):
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    # MANDATE: Overwrite with recalculated entire pending days
-                    cell.value = to_numeric(calc_pending) if calc_pending != "" else ""
+                    # Inject direct Excel Date computation formula
+                    pending_formula = f'=IF({cr_let}{r_idx}="","",DAYS(TODAY(),{cr_let}{r_idx}))'
+                    cell.value = pending_formula
+                elif name_clean == "AGEBAND":
+                    # Determine the Age Band based on evaluated pending days logic
+                    ab_val = ""
+                    if calc_pending != "":
+                        try:
+                            d_val = int(float(str(calc_pending)))
+                            if d_val <= 3: ab_val = "0-3"
+                            elif d_val <= 7: ab_val = "4-7"
+                            elif d_val <= 15: ab_val = "7-15"
+                            else: ab_val = ">15"
+                        except: pass
+                    cell.value = ab_val
                 elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
-                    # MANDATE: Overwrite with recalculated CONCAT(D Name, Ord.no.)
                     cell.value = to_numeric(final_jc_no) if final_jc_no.isdigit() else final_jc_no
                 else:
                     if name_clean in numeric_cols:
