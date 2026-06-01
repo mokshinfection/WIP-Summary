@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v69", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v70", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -361,9 +361,11 @@ if st.button("Generate Final Report"):
         date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
 
         if summary_file:
-            col_map_ws = {name: i for i, name in enumerate(header_ws)}
+            header_cols_list = header_ws
         else:
-            col_map_ws = {name: i for i, name in enumerate(std_headers)}
+            header_cols_list = std_headers
+
+        col_map_ws = {name: i for i, name in enumerate(header_cols_list)}
 
         pd_k = next((k for k in col_map_ws.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["PENDINGDAYS", "PENDING"]), None)
         pd_let = openpyxl.utils.get_column_letter(col_map_ws[pd_k] + 1) if pd_k else "B"
@@ -373,7 +375,11 @@ if st.button("Generate Final Report"):
 
         today_dt = date.today()
 
-        for r_idx, row_data in enumerate(full_data, start=2):
+        # Temporary staging arrays to segregate open vs closed calculations natively
+        open_records_staging = []
+        closed_records_staging = []
+
+        for row_data in full_data:
             is_new = row_data.get("IS_NEW_RECORD", False)
             
             ord_key = next((k for k in row_data.keys() if str(k).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
@@ -482,8 +488,27 @@ if st.button("Generate Final Report"):
             
             final_jc_no = f"{extracted_dname}{ord_no}" if extracted_dname and ord_no else ""
 
+            # Standardized computed payload parameters package
+            processed_package = {
+                "row_data_source": row_data,
+                "cat_val": cat_val,
+                "status": status,
+                "final_inv_no": final_inv_no,
+                "final_date_val": final_date_val,
+                "calc_pending": calc_pending,
+                "final_jc_no": final_jc_no
+            }
+
+            if status == "Closed":
+                closed_records_staging.append(processed_package)
+            else:
+                open_records_staging.append(processed_package)
+
+        # 1. Populate Active Open Rows into "Master Data" Sheet
+        for idx_open, item in enumerate(open_records_staging, start=2):
+            row_data = item["row_data_source"]
             for name, c_idx in col_map_ws.items():
-                cell = ws.cell(row=r_idx, column=c_idx + 1)
+                cell = ws.cell(row=idx_open, column=c_idx + 1)
                 name_clean = str(name).strip().upper().replace(" ", "").replace(".", "")
                 
                 val = row_data.get(name)
@@ -494,24 +519,77 @@ if st.button("Generate Final Report"):
                             break
                             
                 if name_clean in ["SNO", "SLNO"]:
-                    cell.value = r_idx - 1
+                    cell.value = idx_open - 1
                 elif name_clean == "CATEGORY":
-                    cell.value = cat_val
+                    cell.value = item["cat_val"]
                 elif name_clean == "STATUS":
-                    cell.value = status
+                    cell.value = item["status"]
                 elif name_clean in ["INVOICENO", "INVNO"]:
-                    cell.value = to_numeric(final_inv_no) if str(final_inv_no).isdigit() else final_inv_no
+                    cell.value = to_numeric(item["final_inv_no"]) if str(item["final_inv_no"]).isdigit() else item["final_inv_no"]
                 elif name_clean == "DATE":
-                    cell.value = final_date_val
+                    cell.value = item["final_date_val"]
                 elif name_clean == "REMARKS":
                     cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
                 elif name_clean in ["PENDINGDAYS", "PENDING"]:
-                    cell.value = to_numeric(calc_pending) if calc_pending != "" else ""
+                    cell.value = to_numeric(item["calc_pending"]) if item["calc_pending"] != "" else ""
                 elif name_clean == "AGEBAND":
-                    # EXCEL MACRO FORMULA ENGINE LAYER: Checking 'Status' column letter index natively for "Closed" values
-                    cell.value = f'=IF({stat_let_loc}{r_idx}="Closed","Closed",IF({pd_let}{r_idx}="","",IF({pd_let}{r_idx}<=3,"0-3",IF({pd_let}{r_idx}<=7,"4-7",IF({pd_let}{r_idx}<=15,"7-15",">15")))))'
+                    cell.value = f'=IF({stat_let_loc}{idx_open}="Closed","Closed",IF({pd_let}{idx_open}="","",IF({pd_let}{idx_open}<=3,"0-3",IF({pd_let}{idx_open}<=7,"4-7",IF({pd_let}{idx_open}<=15,"7-15",">15")))))'
                 elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
-                    cell.value = to_numeric(final_jc_no) if final_jc_no.isdigit() else final_jc_no
+                    cell.value = to_numeric(item["final_jc_no"]) if item["final_jc_no"].isdigit() else item["final_jc_no"]
+                else:
+                    if name_clean in numeric_cols:
+                        cell.value = to_numeric(val)
+                    else:
+                        cell.value = val if pd.notna(val) and str(val).lower() != 'nan' else ""
+                        
+                if name_clean in ["REQDELVDT", "CRDT", "CLOSINGDATE", "DATE"] and cell.value:
+                    cell.number_format = 'mm-dd-yy'
+
+        # 2. Initialize and Populate Dedicated "Closed Data" Sheet
+        if "Closed Data" in wb.sheetnames:
+            ws_closed = wb["Closed Data"]
+            if ws_closed.max_row > 1: ws_closed.delete_rows(2, ws_closed.max_row - 1)
+        else:
+            ws_closed = wb.create_sheet(title="Closed Data")
+            
+        header_fill = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF")
+        for col_idx, col_name in enumerate(header_cols_list, start=1):
+            cell = ws_closed.cell(row=1, column=col_idx, value=col_name)
+            cell.fill = header_fill
+            cell.font = header_font
+
+        for idx_closed, item in enumerate(closed_records_staging, start=2):
+            row_data = item["row_data_source"]
+            for name, c_idx in col_map_ws.items():
+                cell = ws_closed.cell(row=idx_closed, column=c_idx + 1)
+                name_clean = str(name).strip().upper().replace(" ", "").replace(".", "")
+                
+                val = row_data.get(name)
+                if val is None or str(val).strip() == "" or pd.isna(val) or str(val).strip().lower() == 'nan':
+                    for k, v in row_data.items():
+                        if str(k).strip().upper().replace(" ", "").replace(".", "") == name_clean:
+                            val = v
+                            break
+                            
+                if name_clean in ["SNO", "SLNO"]:
+                    cell.value = idx_closed - 1
+                elif name_clean == "CATEGORY":
+                    cell.value = item["cat_val"]
+                elif name_clean == "STATUS":
+                    cell.value = item["status"]
+                elif name_clean in ["INVOICENO", "INVNO"]:
+                    cell.value = to_numeric(item["final_inv_no"]) if str(item["final_inv_no"]).isdigit() else item["final_inv_no"]
+                elif name_clean == "DATE":
+                    cell.value = item["final_date_val"]
+                elif name_clean == "REMARKS":
+                    cell.value = apply_rich_remarks(str(val or '')) if pd.notna(val) and str(val).lower() != 'nan' else ""
+                elif name_clean in ["PENDINGDAYS", "PENDING"]:
+                    cell.value = to_numeric(item["calc_pending"]) if item["calc_pending"] != "" else ""
+                elif name_clean == "AGEBAND":
+                    cell.value = f'=IF({stat_let_loc}{idx_closed}="Closed","Closed",IF({pd_let}{idx_closed}="","",IF({pd_let}{idx_closed}<=3,"0-3",IF({pd_let}{idx_closed}<=7,"4-7",IF({pd_let}{idx_closed}<=15,"7-15",">15")))))'
+                elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
+                    cell.value = to_numeric(item["final_jc_no"]) if item["final_jc_no"].isdigit() else item["final_jc_no"]
                 else:
                     if name_clean in numeric_cols:
                         cell.value = to_numeric(val)
@@ -531,22 +609,31 @@ if st.button("Generate Final Report"):
                     curr_ws.title = f"{base_name} {dt_sheet}"
         
         if not summary_file:
-            ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(std_headers))}{len(full_data) + 1}"
+            ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(std_headers))}{len(open_records_staging) + 1}"
+            ws_closed.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(std_headers))}{len(closed_records_staging) + 1}"
 
-        last_row = len(full_data) + 1
+        # Apply conditional format coloring to both target tabs
+        last_row_open = len(open_records_staging) + 1
+        last_row_closed = len(closed_records_staging) + 1
         cat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "CATEGORY"), 'T')
         stat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "STATUS"), 'W')
         
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
-        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2="CANCELLED")'], fill=blue_fill))
-        
+        # Apply formatting structures to Master Data Sheet
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row_open + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
+        ws.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row_open + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
-        ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
-        ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row + 1000}', FormulaRule(formula=[f'{stat_let}2="Open"'], fill=green_fill, font=green_text))
+        ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row_open + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
+        ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row_open + 1000}', FormulaRule(formula=[f'{stat_let}2="Open"'], fill=green_fill, font=green_text))
+
+        # Apply formatting structures to Closed Data Sheet
+        ws_closed.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row_closed + 1000}', FormulaRule(formula=[f'OR({cat_let}2="JOB CARD CLOSED", {cat_let}2="Cancelled", {cat_let}2="CANCELLED")'], fill=green_fill, stopIfTrue=True))
+        ws_closed.conditional_formatting.add(f'{cat_let}2:{cat_let}{last_row_closed + 1000}', FormulaRule(formula=[f'AND({cat_let}2<>"", {cat_let}2<>"JOB CARD CLOSED", {cat_let}2<>"Cancelled", {cat_let}2<>"CANCELLED")'], fill=blue_fill))
+        ws_closed.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row_closed + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
+        ws_closed.conditional_formatting.add(f'{stat_let}2:{stat_let}{last_row_closed + 1000}', FormulaRule(formula=[f'{stat_let}2="Open"'], fill=green_fill, font=green_text))
 
         output = io.BytesIO()
         wb.save(output)
-        st.success(f"Workbook updated successfully for Date: {dt_str}")
+        st.success(f"Workbook updated successfully! Open items are in 'Master Data', and closed items have been split into 'Closed Data'.")
         
         download_name = f"South_Region_WIP_Summary_{dt_file}.xlsx"
         st.download_button("📥 Download Final Report", output.getvalue(), file_name=download_name)
