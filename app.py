@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v71", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v72", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v71")
+st.title("📊 WIP Summary Consolidator Pro")
 
 with st.sidebar:
     st.header("Files")
@@ -375,10 +375,10 @@ if st.button("Generate Final Report"):
 
         today_dt = date.today()
 
-        # Segregation Arrays
+        # Segregation Staging Arrays
         open_records_staging = []
         closed_records_staging = []
-        combined_all_staging = [] # Dynamic staging list for un-segregated master replication
+        combined_all_staging = []
 
         for row_data in full_data:
             is_new = row_data.get("IS_NEW_RECORD", False)
@@ -506,7 +506,7 @@ if st.button("Generate Final Report"):
                 open_records_staging.append(processed_package)
 
         # -----------------------------------------------------------------
-        # FUNCTION LAYERS: Writer loops mapping across specific target sheets
+        # CORE FIX: Correct text loop indices mapping variables dynamically
         # -----------------------------------------------------------------
         def write_target_rows(active_ws, staging_array):
             for r_idx_loc, item in enumerate(staging_array, start=2):
@@ -537,7 +537,8 @@ if st.button("Generate Final Report"):
                     elif name_clean in ["PENDINGDAYS", "PENDING"]:
                         cell.value = to_numeric(item["calc_pending"]) if item["calc_pending"] != "" else ""
                     elif name_clean == "AGEBAND":
-                        cell.value = f'=IF({stat_let_loc}{r_idx_loc}="Closed","Closed",IF({pd_let}{r_idx_loc}="","",IF({pd_let}{r_idx_loc}<=3,"0-3",IF({pd_let}{r_idx}<=7,"4-7",IF({pd_let}{r_idx_loc}<=15,"7-15",">15")))))'
+                        # CRITICAL BUG FIX: Swapped localized index tracking variable to use r_idx_loc instead of crashing loose r_idx pointer
+                        cell.value = f'=IF({stat_let_loc}{r_idx_loc}="Closed","Closed",IF({pd_let}{r_idx_loc}="","",IF({pd_let}{r_idx_loc}<=3,"0-3",IF({pd_let}{r_idx_loc}<=7,"4-7",IF({pd_let}{r_idx_loc}<=15,"7-15",">15")))))'
                     elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
                         cell.value = to_numeric(item["final_jc_no"]) if item["final_jc_no"].isdigit() else item["final_jc_no"]
                     else:
@@ -557,10 +558,9 @@ if st.button("Generate Final Report"):
                 cell.fill = header_fill
                 cell.font = header_font
 
-        # Sheet 1 Execution: Master Data (Open Only)
+        # Populate target spreadsheets
         write_target_rows(ws, open_records_staging)
 
-        # Sheet 2 Execution: Closed Data (Closed Only)
         if "Closed Data" in wb.sheetnames:
             ws_closed = wb["Closed Data"]
             if ws_closed.max_row > 1: ws_closed.delete_rows(2, ws_closed.max_row - 1)
@@ -569,7 +569,6 @@ if st.button("Generate Final Report"):
         apply_sheet_headers(ws_closed)
         write_target_rows(ws_closed, closed_records_staging)
 
-        # Sheet 3 Execution: Combined Data (Open & Closed Together)
         if "Combined Data" in wb.sheetnames:
             ws_combined = wb["Combined Data"]
             if ws_combined.max_row > 1: ws_combined.delete_rows(2, ws_combined.max_row - 1)
@@ -592,7 +591,7 @@ if st.button("Generate Final Report"):
             ws_closed.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(header_cols_list))}{len(closed_records_staging) + 1}"
             ws_combined.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(header_cols_list))}{len(combined_all_staging) + 1}"
 
-        # Setup Styling Boundaries
+        # Style Boundaries
         cat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "CATEGORY"), 'T')
         stat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "STATUS"), 'W')
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
@@ -603,7 +602,6 @@ if st.button("Generate Final Report"):
             target_ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{row_limit + 1000}', FormulaRule(formula=[f'{stat_let}2="Closed"'], fill=red_fill, font=red_text))
             target_ws.conditional_formatting.add(f'{stat_let}2:{stat_let}{row_limit + 1000}', FormulaRule(formula=[f'{stat_let}2="Open"'], fill=green_fill, font=green_text))
 
-        # Enforce layouts across all active outputs
         inject_conditional_styles(ws, len(open_records_staging))
         inject_conditional_styles(ws_closed, len(closed_records_staging))
         inject_conditional_styles(ws_combined, len(combined_all_staging))
