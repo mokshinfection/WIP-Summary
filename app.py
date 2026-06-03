@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v70", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v74", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -116,11 +116,13 @@ def parse_excel_wip(file_obj, filename):
                 else:
                     try: calc_pending = int(float(str(val_0)))
                     except: calc_pending = val_0
+                    
+                dname_clean = str(int(curr_dname)) if str(curr_dname).isdigit() else curr_dname
 
                 record = {
                     "SNO.": "",
                     "Pending Days": calc_pending,
-                    "D.Code &JC NO.": f"{curr_dname}{ord_no}",
+                    "D.Code &JC NO.": f"{dname_clean}{ord_no}",
                     "Dname": curr_dname,
                     "Area": area,
                     "Dealer Name": curr_dealer,
@@ -193,8 +195,22 @@ def process_paycode_report(file_obj):
                 date_idx = date_idx - 1
 
         paycode_dict = {}
+        curr_dealer_code = ""
+        
         if header_row != -1 and ord_idx != -1:
             for i in range(header_row + 1, len(df_raw)):
+                row_vals_clean = [str(x).strip() for x in df_raw.iloc[i].values if pd.notna(x)]
+                if 'Dealer' in row_vals_clean:
+                    for val in row_vals_clean:
+                        if '|' in val:
+                            curr_dealer_code = val.split('|')[0].strip()
+                            break
+                    else:
+                        idx_dealer = row_vals_clean.index('Dealer')
+                        if idx_dealer + 1 < len(row_vals_clean):
+                            curr_dealer_code = row_vals_clean[idx_dealer + 1].strip()
+                    continue
+                
                 ord_raw = df_raw.iloc[i, ord_idx]
                 if pd.isna(ord_raw): continue
                 
@@ -215,12 +231,16 @@ def process_paycode_report(file_obj):
                     raw_dt = df_raw.iloc[i, date_idx]
                     if not pd.isna(raw_dt):
                         dt_val = clean_date_string(raw_dt)
+                
+                # Use robust key composition matching 'D.Code &JC NO.'
+                clean_dealer_code = str(int(curr_dealer_code)) if curr_dealer_code.isdigit() else curr_dealer_code
+                combined_key = f"{clean_dealer_code}{ord_val}" if clean_dealer_code else ord_val
                             
-                if ord_val not in paycode_dict:
-                    paycode_dict[ord_val] = []
+                if combined_key not in paycode_dict:
+                    paycode_dict[combined_key] = []
                     
                 if inv_val or dt_val:
-                    paycode_dict[ord_val].append({"invoice": inv_val, "date": dt_val})
+                    paycode_dict[combined_key].append({"invoice": inv_val, "date": dt_val})
                         
         return paycode_dict
     except Exception as e:
@@ -244,7 +264,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro")
+st.title("📊 WIP Summary Consolidator Pro v74")
 
 with st.sidebar:
     st.header("Files")
@@ -260,7 +280,6 @@ if st.button("Generate Final Report"):
         wb = None
         target_name = "Master Data"
         
-        # APPENDED 'LDS Status' to the master trailing headers
         std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status', 'Age Band', 'LDS Status']
         numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
 
@@ -273,7 +292,6 @@ if st.button("Generate Final Report"):
             if data_rows:
                 header_ws = list(data_rows[0])
                 
-                # Check for Age Band
                 has_age_band = any(str(x).strip().upper().replace(" ", "") == "AGEBAND" for x in header_ws if x)
                 if not has_age_band:
                     header_ws.append("Age Band")
@@ -286,7 +304,6 @@ if st.button("Generate Final Report"):
                             c.fill = PatternFill(fill_type=prev_c.fill.fill_type, start_color=prev_c.fill.start_color, end_color=prev_c.fill.end_color)
                     except: pass
                 
-                # Check for LDS Status
                 has_lds_status = any(str(x).strip().upper().replace(" ", "") == "LDSSTATUS" for x in header_ws if x)
                 if not has_lds_status:
                     header_ws.append("LDS Status")
@@ -340,15 +357,53 @@ if st.button("Generate Final Report"):
             for f in open_order_files:
                 new_data_raw.extend(parse_excel_wip(f, f.name))
         
+        # Robust unified key generation for tracking
         def get_ord(r):
-            k = next((key for key in r.keys() if str(key).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
-            return str(r.get(k, '')).strip() if k else ''
+            k_jc = next((key for key in r.keys() if str(key).strip().upper().replace(" ", "").replace(".", "") in ["DCODE&JCNO", "DCODEJCNO"]), None)
+            jc_val = str(r.get(k_jc, '')).split('.')[0].strip() if k_jc else ''
+            if jc_val and jc_val.lower() not in ['nan', 'none']:
+                return jc_val
+
+            k_dname = next((key for key in r.keys() if str(key).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE", "DNAME"]), None)
+            k_ord = next((key for key in r.keys() if str(key).strip().upper().replace(" ", "").replace(".", "") in ["ORDNO", "ORDID"]), None)
+            
+            dname_val = str(r.get(k_dname, '')).split('.')[0].strip() if k_dname else ''
+            ord_val = str(r.get(k_ord, '')).split('.')[0].strip() if k_ord else ''
+            
+            if not dname_val:
+                k_dlr = next((key for key in r.keys() if str(key).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
+                if k_dlr and r.get(k_dlr):
+                    dlr_val_raw = str(r.get(k_dlr)).strip()
+                    if "|" in dlr_val_raw:
+                        dname_val = dlr_val_raw.split('|')[0].strip()
+                        
+            if dname_val and ord_val:
+                dname_clean = str(int(dname_val)) if dname_val.isdigit() else dname_val
+                return f"{dname_clean}{ord_val}"
+                
+            return ord_val
 
         existing_ids = {get_ord(r) for r in existing_data if get_ord(r)}
         unique_new = [n for n in new_data_raw if get_ord(n) not in existing_ids]
         
-        # Identify all truly active open records generated from today's Open Order Lists uploads for the LDS Status tracker
-        active_open_orders = {str(get_ord(r)).split('.')[0].strip() for r in new_data_raw if get_ord(r)}
+        latest_updates = {get_ord(r): r for r in new_data_raw if get_ord(r)}
+        
+        for d in existing_data:
+            o_id = get_ord(d)
+            if o_id in latest_updates:
+                new_rec = latest_updates[o_id]
+                total_k = next((k for k in d.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "TOTAL"), None)
+                parts_k = next((k for k in d.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "PARTSTOTAL"), None)
+                
+                new_tot = new_rec.get("Total")
+                new_parts = new_rec.get("PartsTotal")
+                
+                if total_k and new_tot is not None and str(new_tot).lower() not in ['nan', 'none', '']:
+                    d[total_k] = new_tot
+                if parts_k and new_parts is not None and str(new_parts).lower() not in ['nan', 'none', '']:
+                    d[parts_k] = new_parts
+                    
+        active_open_orders = {get_ord(r) for r in new_data_raw if get_ord(r)}
 
         full_data = existing_data + unique_new
         
@@ -397,6 +452,7 @@ if st.button("Generate Final Report"):
 
         for row_data in full_data:
             is_new = row_data.get("IS_NEW_RECORD", False)
+            current_jc_key = get_ord(row_data)
             
             ord_key = next((k for k in row_data.keys() if str(k).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
             cr_key = next((k for k in row_data.keys() if str(k).strip().upper() in ["CR.DT", "CR DT"]), None)
@@ -426,8 +482,9 @@ if st.button("Generate Final Report"):
             matched_inv = ""
             matched_dt = None
 
-            if ord_no in paycode_data:
-                for record_item in paycode_data[ord_no]:
+            # Utilize dynamic combined D.Code + Ord.No mapping against paycode extractor
+            if current_jc_key in paycode_data:
+                for record_item in paycode_data[current_jc_key]:
                     inv = record_item["invoice"]
                     potential_date = record_item["date"]
                     
@@ -473,13 +530,7 @@ if st.button("Generate Final Report"):
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
-            # -------------------------------------------------------------
-            # NEW COMPONENT: LDS Status Tracker
-            # Evaluates if the current order exists in the newly uploaded raw list arrays
-            # -------------------------------------------------------------
-            lds_status = "Open" if ord_no in active_open_orders else "Closed"
-            
-            # Master logic override: If order dropped from LDS tracking system entirely, force Status to Closed
+            lds_status = "Open" if current_jc_key in active_open_orders else "Closed"
             if lds_status == "Closed":
                 status = "Closed"
                 
@@ -513,6 +564,8 @@ if st.button("Generate Final Report"):
                     extracted_dname = str(row_data.get(dk_alt)).strip().split('.')[0]
             
             final_jc_no = f"{extracted_dname}{ord_no}" if extracted_dname and ord_no else ""
+            if not final_jc_no:
+                final_jc_no = current_jc_key
 
             processed_package = {
                 "row_data_source": row_data,
@@ -527,7 +580,6 @@ if st.button("Generate Final Report"):
 
             combined_all_staging.append(processed_package)
             
-            # Segregation utilizes the newly updated Status values incorporating the LDS tracker
             if status == "Closed":
                 closed_records_staging.append(processed_package)
             else:
@@ -564,7 +616,7 @@ if st.button("Generate Final Report"):
                     elif name_clean == "AGEBAND":
                         cell.value = f'=IF({stat_let_loc}{r_idx_loc}="Closed","Closed",IF({pd_let}{r_idx_loc}="","",IF({pd_let}{r_idx_loc}<=3,"0-3",IF({pd_let}{r_idx_loc}<=7,"4-7",IF({pd_let}{r_idx_loc}<=15,"7-15",">15")))))'
                     elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
-                        cell.value = to_numeric(item["final_jc_no"]) if item["final_jc_no"].isdigit() else item["final_jc_no"]
+                        cell.value = to_numeric(item["final_jc_no"]) if str(item["final_jc_no"]).isdigit() else item["final_jc_no"]
                     elif name_clean == "LDSSTATUS":
                         cell.value = item["lds_status"]
                     else:
@@ -632,7 +684,7 @@ if st.button("Generate Final Report"):
 
         output = io.BytesIO()
         wb.save(output)
-        st.success(f"Workbook updated successfully! LDS Status added. Open items -> 'Master Data', Closed items -> 'Closed Data', and Unfiltered master -> 'Combined Data'.")
+        st.success(f"Workbook updated successfully! Open items -> 'Master Data', Closed items -> 'Closed Data', and Unfiltered master -> 'Combined Data'.")
         
         download_name = f"South_Region_WIP_Summary_{dt_file}.xlsx"
         st.download_button("📥 Download Final Report", output.getvalue(), file_name=download_name)
