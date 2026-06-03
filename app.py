@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator ", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v70", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -244,7 +244,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator")
+st.title("📊 WIP Summary Consolidator Pro")
 
 with st.sidebar:
     st.header("Files")
@@ -260,7 +260,8 @@ if st.button("Generate Final Report"):
         wb = None
         target_name = "Master Data"
         
-        std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status', 'Age Band']
+        # APPENDED 'LDS Status' to the master trailing headers
+        std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status', 'Age Band', 'LDS Status']
         numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
 
         if summary_file:
@@ -272,6 +273,7 @@ if st.button("Generate Final Report"):
             if data_rows:
                 header_ws = list(data_rows[0])
                 
+                # Check for Age Band
                 has_age_band = any(str(x).strip().upper().replace(" ", "") == "AGEBAND" for x in header_ws if x)
                 if not has_age_band:
                     header_ws.append("Age Band")
@@ -282,9 +284,21 @@ if st.button("Generate Final Report"):
                         if prev_c.has_style:
                             c.font = Font(name=prev_c.font.name, b=prev_c.font.b, color=prev_c.font.color)
                             c.fill = PatternFill(fill_type=prev_c.fill.fill_type, start_color=prev_c.fill.start_color, end_color=prev_c.fill.end_color)
-                    except:
-                        pass
+                    except: pass
                 
+                # Check for LDS Status
+                has_lds_status = any(str(x).strip().upper().replace(" ", "") == "LDSSTATUS" for x in header_ws if x)
+                if not has_lds_status:
+                    header_ws.append("LDS Status")
+                    new_col_idx = len(header_ws)
+                    c = ws.cell(row=1, column=new_col_idx, value="LDS Status")
+                    try:
+                        prev_c = ws.cell(row=1, column=new_col_idx-1)
+                        if prev_c.has_style:
+                            c.font = Font(name=prev_c.font.name, b=prev_c.font.b, color=prev_c.font.color)
+                            c.fill = PatternFill(fill_type=prev_c.fill.fill_type, start_color=prev_c.fill.start_color, end_color=prev_c.fill.end_color)
+                    except: pass
+
                 col_map_ws = {name: i for i, name in enumerate(header_ws)}
                 
                 for row in data_rows[1:]:
@@ -333,6 +347,9 @@ if st.button("Generate Final Report"):
         existing_ids = {get_ord(r) for r in existing_data if get_ord(r)}
         unique_new = [n for n in new_data_raw if get_ord(n) not in existing_ids]
         
+        # Identify all truly active open records generated from today's Open Order Lists uploads for the LDS Status tracker
+        active_open_orders = {str(get_ord(r)).split('.')[0].strip() for r in new_data_raw if get_ord(r)}
+
         full_data = existing_data + unique_new
         
         def get_chassis(r):
@@ -358,7 +375,6 @@ if st.button("Generate Final Report"):
         green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
         blue_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
         red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-        date_cols = ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']
 
         if summary_file:
             header_cols_list = header_ws
@@ -375,7 +391,6 @@ if st.button("Generate Final Report"):
 
         today_dt = date.today()
 
-        # Segregation Staging Arrays
         open_records_staging = []
         closed_records_staging = []
         combined_all_staging = []
@@ -458,6 +473,16 @@ if st.button("Generate Final Report"):
                     elif "CANCEL" in cat_val.upper() or "CLOSED" in cat_val.upper():
                         status = "Closed"
 
+            # -------------------------------------------------------------
+            # NEW COMPONENT: LDS Status Tracker
+            # Evaluates if the current order exists in the newly uploaded raw list arrays
+            # -------------------------------------------------------------
+            lds_status = "Open" if ord_no in active_open_orders else "Closed"
+            
+            # Master logic override: If order dropped from LDS tracking system entirely, force Status to Closed
+            if lds_status == "Closed":
+                status = "Closed"
+                
             dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
             dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
             
@@ -496,18 +521,18 @@ if st.button("Generate Final Report"):
                 "final_inv_no": final_inv_no,
                 "final_date_val": final_date_val,
                 "calc_pending": calc_pending,
-                "final_jc_no": final_jc_no
+                "final_jc_no": final_jc_no,
+                "lds_status": lds_status
             }
 
             combined_all_staging.append(processed_package)
+            
+            # Segregation utilizes the newly updated Status values incorporating the LDS tracker
             if status == "Closed":
                 closed_records_staging.append(processed_package)
             else:
                 open_records_staging.append(processed_package)
 
-        # -----------------------------------------------------------------
-        # CORE FIX: Correct text loop indices mapping variables dynamically
-        # -----------------------------------------------------------------
         def write_target_rows(active_ws, staging_array):
             for r_idx_loc, item in enumerate(staging_array, start=2):
                 row_data = item["row_data_source"]
@@ -537,10 +562,11 @@ if st.button("Generate Final Report"):
                     elif name_clean in ["PENDINGDAYS", "PENDING"]:
                         cell.value = to_numeric(item["calc_pending"]) if item["calc_pending"] != "" else ""
                     elif name_clean == "AGEBAND":
-                        # CRITICAL BUG FIX: Swapped localized index tracking variable to use r_idx_loc instead of crashing loose r_idx pointer
                         cell.value = f'=IF({stat_let_loc}{r_idx_loc}="Closed","Closed",IF({pd_let}{r_idx_loc}="","",IF({pd_let}{r_idx_loc}<=3,"0-3",IF({pd_let}{r_idx_loc}<=7,"4-7",IF({pd_let}{r_idx_loc}<=15,"7-15",">15")))))'
                     elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
                         cell.value = to_numeric(item["final_jc_no"]) if item["final_jc_no"].isdigit() else item["final_jc_no"]
+                    elif name_clean == "LDSSTATUS":
+                        cell.value = item["lds_status"]
                     else:
                         if name_clean in numeric_cols:
                             cell.value = to_numeric(val)
@@ -558,7 +584,6 @@ if st.button("Generate Final Report"):
                 cell.fill = header_fill
                 cell.font = header_font
 
-        # Populate target spreadsheets
         write_target_rows(ws, open_records_staging)
 
         if "Closed Data" in wb.sheetnames:
@@ -591,7 +616,6 @@ if st.button("Generate Final Report"):
             ws_closed.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(header_cols_list))}{len(closed_records_staging) + 1}"
             ws_combined.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(header_cols_list))}{len(combined_all_staging) + 1}"
 
-        # Style Boundaries
         cat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "CATEGORY"), 'T')
         stat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "STATUS"), 'W')
         red_text, green_text = Font(color="9C0006", bold=True), Font(color="006100", bold=True)
@@ -608,7 +632,7 @@ if st.button("Generate Final Report"):
 
         output = io.BytesIO()
         wb.save(output)
-        st.success(f"Workbook updated successfully! Open items -> 'Master Data', Closed items -> 'Closed Data', and Unfiltered master -> 'Combined Data'.")
+        st.success(f"Workbook updated successfully! LDS Status added. Open items -> 'Master Data', Closed items -> 'Closed Data', and Unfiltered master -> 'Combined Data'.")
         
         download_name = f"South_Region_WIP_Summary_{dt_file}.xlsx"
         st.download_button("📥 Download Final Report", output.getvalue(), file_name=download_name)
