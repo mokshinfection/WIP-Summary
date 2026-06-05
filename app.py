@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v76", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v77", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -92,7 +92,7 @@ def parse_excel_wip(file_obj, filename):
             if '|' in raw_dealer_str:
                 parts = [p.strip() for p in raw_dealer_str.split('|')]
                 curr_dname = parts[0]
-                curr_dealer = parts[2] if len(parts) >= 3 else parts[-1]
+                curr_dealer = raw_dealer_str # Preserve the full piped string
             else:
                 curr_dname = raw_dealer_str.split('.')[0].strip() if len(row_list_clean) == 2 else (row_list_clean[1].split('.')[0].strip() if len(row_list_clean) > 1 else "")
                 curr_dealer = raw_dealer_str
@@ -261,7 +261,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v76")
+st.title("📊 WIP Summary Consolidator Pro v77")
 
 with st.sidebar:
     st.header("Files")
@@ -310,7 +310,8 @@ if st.button("Generate Final Report"):
             header_ws = None
             loaded_ids = set()
             
-            target_sheets = [s for s in wb.sheetnames if "MASTER" in s.upper() or "WORKING" in s.upper()]
+            # Extract data from all structural table sheets
+            target_sheets = [s for s in wb.sheetnames if any(x in s.upper() for x in ["MASTER", "WORKING", "COMBINED", "CLOSED", "RAW"])]
             if not target_sheets:
                 target_sheets = [wb.sheetnames[0]]
                 
@@ -386,14 +387,18 @@ if st.button("Generate Final Report"):
                 new_rec = latest_updates[o_id]
                 total_k = next((k for k in d.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "TOTAL"), None)
                 parts_k = next((k for k in d.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "PARTSTOTAL"), None)
+                dlr_k = next((k for k in d.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
                 
                 new_tot = new_rec.get("Total")
                 new_parts = new_rec.get("PartsTotal")
+                new_dealer = new_rec.get("Dealer Name")
                 
                 if total_k and new_tot is not None and str(new_tot).lower() not in ['nan', 'none', '']:
                     d[total_k] = new_tot
                 if parts_k and new_parts is not None and str(new_parts).lower() not in ['nan', 'none', '']:
                     d[parts_k] = new_parts
+                if dlr_k and new_dealer:
+                    d[dlr_k] = new_dealer # Sync the full piped string to existing data if it appears in today's list
                     
         active_open_orders = {get_ord(r) for r in new_data_raw if get_ord(r)}
 
@@ -524,14 +529,14 @@ if st.button("Generate Final Report"):
             dlr_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") == "DEALERNAME"), None)
             dname_k = next((k for k in row_data.keys() if str(k).strip().upper().replace(" ", "").replace(".", "") in ["DNAME", "DEALERCODE"]), None)
             
-            if is_new:
-                if dlr_k and row_data.get(dlr_k):
-                    dlr_val_raw = str(row_data[dlr_k]).strip()
-                    if "|" in dlr_val_raw:
-                        parts = [p.strip() for p in dlr_val_raw.split('|')]
-                        row_data[dlr_k] = parts[2] if len(parts) >= 3 else parts[-1]
-                        if dname_k:
-                            row_data[dname_k] = to_numeric(parts[0])
+            # Ensures dealer strings retain the full pipe syntax
+            if dlr_k and row_data.get(dlr_k):
+                dlr_val_raw = str(row_data[dlr_k]).strip()
+                if "|" in dlr_val_raw:
+                    parts = [p.strip() for p in dlr_val_raw.split('|')]
+                    row_data[dlr_k] = dlr_val_raw
+                    if dname_k:
+                        row_data[dname_k] = to_numeric(parts[0])
 
             calc_pending = ""
             if creation_date and isinstance(creation_date, date):
