@@ -9,7 +9,7 @@ from openpyxl.cell.rich_text import CellRichText, TextBlock
 from openpyxl.formatting.rule import FormulaRule
 from datetime import date, datetime
 
-st.set_page_config(page_title="WIP Summary Consolidator Pro v74", layout="wide")
+st.set_page_config(page_title="WIP Summary Consolidator Pro v76", layout="wide")
 
 def extract_area_from_filename(filename):
     match = re.search(r"Open Orders List\s+(.*?)\s+\d+", filename, re.IGNORECASE)
@@ -116,13 +116,11 @@ def parse_excel_wip(file_obj, filename):
                 else:
                     try: calc_pending = int(float(str(val_0)))
                     except: calc_pending = val_0
-                    
-                dname_clean = str(int(curr_dname)) if str(curr_dname).isdigit() else curr_dname
 
                 record = {
                     "SNO.": "",
                     "Pending Days": calc_pending,
-                    "D.Code &JC NO.": f"{dname_clean}{ord_no}",
+                    "D.Code &JC NO.": f"{curr_dname}{ord_no}",
                     "Dname": curr_dname,
                     "Area": area,
                     "Dealer Name": curr_dealer,
@@ -232,7 +230,6 @@ def process_paycode_report(file_obj):
                     if not pd.isna(raw_dt):
                         dt_val = clean_date_string(raw_dt)
                 
-                # Use robust key composition matching 'D.Code &JC NO.'
                 clean_dealer_code = str(int(curr_dealer_code)) if curr_dealer_code.isdigit() else curr_dealer_code
                 combined_key = f"{clean_dealer_code}{ord_val}" if clean_dealer_code else ord_val
                             
@@ -264,7 +261,7 @@ def apply_rich_remarks(text):
         else: rt.append(TextBlock(normal, suffix))
     return rt
 
-st.title("📊 WIP Summary Consolidator Pro v74")
+st.title("📊 WIP Summary Consolidator Pro v76")
 
 with st.sidebar:
     st.header("Files")
@@ -283,81 +280,6 @@ if st.button("Generate Final Report"):
         std_headers = ['SNO.', 'Pending Days', 'D.Code &JC NO.', 'Dname', 'Area', 'Dealer Name', 'Req. Delv. Dt', 'Cr.Dt', 'Total', 'PartsTotal', 'Ord.No.', 'Ord.Ty.', 'Regn.No', 'Chassis/SL No.', 'Notes', 'Cust.No', 'Cust Name', 'Closing Date', 'Remarks', 'Category', 'Invoice no.', 'Date', 'Status', 'Age Band', 'LDS Status']
         numeric_cols = ['SNO.', 'TOTAL', 'PARTSTOTAL', 'ORDNO', 'CUSTNO']
 
-        if summary_file:
-            wb = openpyxl.load_workbook(summary_file, keep_links=True)
-            target_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
-            ws = wb[target_name]
-
-            data_rows = list(ws.iter_rows(values_only=True))
-            if data_rows:
-                header_ws = list(data_rows[0])
-                
-                has_age_band = any(str(x).strip().upper().replace(" ", "") == "AGEBAND" for x in header_ws if x)
-                if not has_age_band:
-                    header_ws.append("Age Band")
-                    new_col_idx = len(header_ws)
-                    c = ws.cell(row=1, column=new_col_idx, value="Age Band")
-                    try:
-                        prev_c = ws.cell(row=1, column=new_col_idx-1)
-                        if prev_c.has_style:
-                            c.font = Font(name=prev_c.font.name, b=prev_c.font.b, color=prev_c.font.color)
-                            c.fill = PatternFill(fill_type=prev_c.fill.fill_type, start_color=prev_c.fill.start_color, end_color=prev_c.fill.end_color)
-                    except: pass
-                
-                has_lds_status = any(str(x).strip().upper().replace(" ", "") == "LDSSTATUS" for x in header_ws if x)
-                if not has_lds_status:
-                    header_ws.append("LDS Status")
-                    new_col_idx = len(header_ws)
-                    c = ws.cell(row=1, column=new_col_idx, value="LDS Status")
-                    try:
-                        prev_c = ws.cell(row=1, column=new_col_idx-1)
-                        if prev_c.has_style:
-                            c.font = Font(name=prev_c.font.name, b=prev_c.font.b, color=prev_c.font.color)
-                            c.fill = PatternFill(fill_type=prev_c.fill.fill_type, start_color=prev_c.fill.start_color, end_color=prev_c.fill.end_color)
-                    except: pass
-
-                col_map_ws = {name: i for i, name in enumerate(header_ws)}
-                
-                for row in data_rows[1:]:
-                    if all(val is None or str(val).strip() == '' for val in row):
-                        continue
-                        
-                    d = {}
-                    for i, name in enumerate(header_ws):
-                        if i < len(row): d[name] = row[i]
-                        else: d[name] = ""
-                    
-                    ord_key = next((k for k in d.keys() if str(k).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
-                    if not ord_key or not d.get(ord_key) or str(d[ord_key]).strip().lower() in ['nan', 'none', '']:
-                        continue
-
-                    if d.get('Area') == "A.P": d['Area'] = "Nellore"
-                    if d.get('Area') == "Hyderabad": d['Area'] = "HYD"
-                    
-                    for k in ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']:
-                        if d.get(k): d[k] = clean_date_string(d[k])
-
-                    d["IS_NEW_RECORD"] = False
-                    existing_data.append(d)
-        else:
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "Master Data"
-            col_map_ws = {name: i for i, name in enumerate(std_headers)}
-            
-            header_fill = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
-            header_font = Font(bold=True, color="FFFFFF")
-            for col_idx, col_name in enumerate(std_headers, start=1):
-                cell = ws.cell(row=1, column=col_idx, value=col_name)
-                cell.fill = header_fill
-                cell.font = header_font
-
-        new_data_raw = []
-        if open_order_files:
-            for f in open_order_files:
-                new_data_raw.extend(parse_excel_wip(f, f.name))
-        
-        # Robust unified key generation for tracking
         def get_ord(r):
             k_jc = next((key for key in r.keys() if str(key).strip().upper().replace(" ", "").replace(".", "") in ["DCODE&JCNO", "DCODEJCNO"]), None)
             jc_val = str(r.get(k_jc, '')).split('.')[0].strip() if k_jc else ''
@@ -382,6 +304,76 @@ if st.button("Generate Final Report"):
                 return f"{dname_clean}{ord_val}"
                 
             return ord_val
+
+        if summary_file:
+            wb = openpyxl.load_workbook(summary_file, keep_links=True)
+            header_ws = None
+            loaded_ids = set()
+            
+            target_sheets = [s for s in wb.sheetnames if "MASTER" in s.upper() or "WORKING" in s.upper()]
+            if not target_sheets:
+                target_sheets = [wb.sheetnames[0]]
+                
+            for sname in target_sheets:
+                ws_temp = wb[sname]
+                data_rows = list(ws_temp.iter_rows(values_only=True))
+                if not data_rows: continue
+                
+                sheet_headers = list(data_rows[0])
+                
+                if header_ws is None:
+                    header_ws = list(sheet_headers)
+                    has_age_band = any(str(x).strip().upper().replace(" ", "") == "AGEBAND" for x in header_ws if x)
+                    if not has_age_band: header_ws.append("Age Band")
+                    
+                    has_lds_status = any(str(x).strip().upper().replace(" ", "") == "LDSSTATUS" for x in header_ws if x)
+                    if not has_lds_status: header_ws.append("LDS Status")
+                
+                for row in data_rows[1:]:
+                    if all(val is None or str(val).strip() == '' for val in row):
+                        continue
+                        
+                    d = {}
+                    for i, name in enumerate(sheet_headers):
+                        if i < len(row): d[name] = row[i]
+                        else: d[name] = ""
+                    
+                    ord_key = next((k for k in d.keys() if str(k).strip().upper() in ["ORD.NO.", "ORD NO"]), None)
+                    if not ord_key or not d.get(ord_key) or str(d[ord_key]).strip().lower() in ['nan', 'none', '']:
+                        continue
+                        
+                    uid = get_ord(d)
+                    if uid in loaded_ids: continue
+                    if uid: loaded_ids.add(uid)
+
+                    if d.get('Area') == "A.P": d['Area'] = "Nellore"
+                    if d.get('Area') == "Hyderabad": d['Area'] = "HYD"
+                    
+                    for k in ['Req. Delv. Dt', 'Cr.Dt', 'Closing Date', 'Date']:
+                        if d.get(k): d[k] = clean_date_string(d[k])
+
+                    d["IS_NEW_RECORD"] = False
+                    existing_data.append(d)
+            
+            target_name = "Master Data" if "Master Data" in wb.sheetnames else wb.sheetnames[0]
+            ws = wb[target_name]
+        else:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "Master Data"
+            header_ws = std_headers
+            
+            header_fill = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+            header_font = Font(bold=True, color="FFFFFF")
+            for col_idx, col_name in enumerate(std_headers, start=1):
+                cell = ws.cell(row=1, column=col_idx, value=col_name)
+                cell.fill = header_fill
+                cell.font = header_font
+
+        new_data_raw = []
+        if open_order_files:
+            for f in open_order_files:
+                new_data_raw.extend(parse_excel_wip(f, f.name))
 
         existing_ids = {get_ord(r) for r in existing_data if get_ord(r)}
         unique_new = [n for n in new_data_raw if get_ord(n) not in existing_ids]
@@ -446,11 +438,7 @@ if st.button("Generate Final Report"):
 
         today_dt = date.today()
 
-        open_records_staging = []
-        closed_records_staging = []
-        combined_all_staging = []
-
-        for row_data in full_data:
+        def process_row(row_data):
             is_new = row_data.get("IS_NEW_RECORD", False)
             current_jc_key = get_ord(row_data)
             
@@ -482,7 +470,6 @@ if st.button("Generate Final Report"):
             matched_inv = ""
             matched_dt = None
 
-            # Utilize dynamic combined D.Code + Ord.No mapping against paycode extractor
             if current_jc_key in paycode_data:
                 for record_item in paycode_data[current_jc_key]:
                     inv = record_item["invoice"]
@@ -567,7 +554,7 @@ if st.button("Generate Final Report"):
             if not final_jc_no:
                 final_jc_no = current_jc_key
 
-            processed_package = {
+            return {
                 "row_data_source": row_data,
                 "cat_val": cat_val,
                 "status": status,
@@ -578,12 +565,22 @@ if st.button("Generate Final Report"):
                 "lds_status": lds_status
             }
 
-            combined_all_staging.append(processed_package)
-            
-            if status == "Closed":
-                closed_records_staging.append(processed_package)
+        open_records_staging = []
+        closed_records_staging = []
+        combined_all_staging = []
+        raw_records_staging = []
+
+        for row_data in full_data:
+            pkg = process_row(row_data)
+            combined_all_staging.append(pkg)
+            if pkg["status"] == "Closed":
+                closed_records_staging.append(pkg)
             else:
-                open_records_staging.append(processed_package)
+                open_records_staging.append(pkg)
+
+        for row_data in new_data_raw:
+            pkg = process_row(row_data)
+            raw_records_staging.append(pkg)
 
         def write_target_rows(active_ws, staging_array):
             for r_idx_loc, item in enumerate(staging_array, start=2):
@@ -654,6 +651,14 @@ if st.button("Generate Final Report"):
         apply_sheet_headers(ws_combined)
         write_target_rows(ws_combined, combined_all_staging)
 
+        if "Raw Data" in wb.sheetnames:
+            ws_raw = wb["Raw Data"]
+            if ws_raw.max_row > 1: ws_raw.delete_rows(2, ws_raw.max_row - 1)
+        else:
+            ws_raw = wb.create_sheet(title="Raw Data")
+        apply_sheet_headers(ws_raw)
+        write_target_rows(ws_raw, raw_records_staging)
+
         if summary_file:
             for sname in list(wb.sheetnames):
                 if "Summary WIP" in sname:
@@ -667,6 +672,7 @@ if st.button("Generate Final Report"):
             ws.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(header_cols_list))}{len(open_records_staging) + 1}"
             ws_closed.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(header_cols_list))}{len(closed_records_staging) + 1}"
             ws_combined.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(header_cols_list))}{len(combined_all_staging) + 1}"
+            ws_raw.auto_filter.ref = f"A1:{openpyxl.utils.get_column_letter(len(header_cols_list))}{len(raw_records_staging) + 1}"
 
         cat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "CATEGORY"), 'T')
         stat_let = next((openpyxl.utils.get_column_letter(i+1) for k,i in col_map_ws.items() if str(k).strip().upper().replace(" ", "").replace(".", "") == "STATUS"), 'W')
@@ -681,10 +687,11 @@ if st.button("Generate Final Report"):
         inject_conditional_styles(ws, len(open_records_staging))
         inject_conditional_styles(ws_closed, len(closed_records_staging))
         inject_conditional_styles(ws_combined, len(combined_all_staging))
+        inject_conditional_styles(ws_raw, len(raw_records_staging))
 
         output = io.BytesIO()
         wb.save(output)
-        st.success(f"Workbook updated successfully! Open items -> 'Master Data', Closed items -> 'Closed Data', and Unfiltered master -> 'Combined Data'.")
+        st.success(f"Workbook updated successfully! Open -> 'Master Data', Closed -> 'Closed Data', Combined -> 'Combined Data', and Raw Inputs -> 'Raw Data'.")
         
         download_name = f"South_Region_WIP_Summary_{dt_file}.xlsx"
         st.download_button("📥 Download Final Report", output.getvalue(), file_name=download_name)
