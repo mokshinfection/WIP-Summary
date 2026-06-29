@@ -616,7 +616,7 @@ if st.button("Generate Final Report"):
                     elif name_clean in ["PENDINGDAYS", "PENDING"]:
                         cell.value = to_numeric(item["calc_pending"]) if item["calc_pending"] != "" else ""
                     elif name_clean == "AGEBAND":
-                        cell.value = f\'=IF({stat_let_loc}{r_idx_loc}="Closed","Closed",IF({pd_let}{r_idx_loc}="","",IF({pd_let}{r_idx_loc}<=30,"0-30",IF({pd_let}{r_idx_loc}<=60,"30-60",IF({pd_let}{r_idx_loc}<=90,"60-90",IF({pd_let}{r_idx_loc}<=120,"90-120",IF({pd_let}{r_idx_loc}<=150,"121-150",IF({pd_let}{r_idx_loc}<=180,"150-180",IF({pd_let}{r_idx_loc}<=365,"181-365",">365")))))))))\'
+                        cell.value = f'=IF({stat_let_loc}{r_idx_loc}="Closed","Closed",IF({pd_let}{r_idx_loc}="","",IF({pd_let}{r_idx_loc}<=30,"0-30",IF({pd_let}{r_idx_loc}<=60,"30-60",IF({pd_let}{r_idx_loc}<=90,"60-90",IF({pd_let}{r_idx_loc}<=120,"90-120",IF({pd_let}{r_idx_loc}<=150,"121-150",IF({pd_let}{r_idx_loc}<=180,"150-180",IF({pd_let}{r_idx_loc}<=365,"181-365",">365")))))))))'
                     elif name_clean in ["DCODE&JCNO", "DCODEJCNO"]:
                         cell.value = to_numeric(item["final_jc_no"]) if str(item["final_jc_no"]).isdigit() else item["final_jc_no"]
                     elif name_clean == "LDSSTATUS":
